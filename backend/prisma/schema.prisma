@@ -1,0 +1,607 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. XÁC THỰC, PHÂN QUYỀN & QUẢN LÝ PHIÊN
+// ==========================================
+
+enum RoleType {
+  ADMIN
+  STAFF
+}
+
+model Role {
+  id          String   @id // 'ADMIN', 'STAFF'
+  name        String
+  description String?
+  users       User[]
+
+  @@map("roles")
+}
+
+model User {
+  id                    String                 @id @default(uuid())
+  roleId                String                 @map("role_id")
+  role                  Role                   @relation(fields: [roleId], references: [id])
+  username              String                 @unique
+  passwordHash          String                 @map("password_hash")
+  fullName              String                 @map("full_name")
+  phone                 String?
+  isActive              Boolean                @default(true) @map("is_active")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  deletedAt             DateTime?              @map("deleted_at")
+
+  sessions              UserSession[]
+  purchaseReceipts      PurchaseReceipt[]
+  productionOrders      ProductionOrder[]
+  orders                Order[]
+  payments              Payment[]
+  stockDocuments        StockDocument[]
+  financialTransactions FinancialTransaction[]
+  auditLogs             AuditLog[]
+  recipes               Recipe[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  deviceInfo       String    @map("device_info")
+  ipAddress        String    @map("ip_address")
+  lastActiveAt     DateTime  @default(now()) @map("last_active_at")
+  expiresAt        DateTime  @map("expires_at")
+  isRevoked        Boolean   @default(false) @map("is_revoked")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+// ==========================================
+// 2. NGUYÊN VẬT LIỆU & NHÀ CUNG CẤP (MWAC)
+// ==========================================
+
+model MaterialCategory {
+  id        String     @id @default(uuid())
+  code      String     @unique
+  name      String
+  materials Material[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  deletedAt DateTime?  @map("deleted_at")
+
+  @@map("material_categories")
+}
+
+model Material {
+  id                     String                  @id @default(uuid())
+  categoryId             String                  @map("category_id")
+  category               MaterialCategory        @relation(fields: [categoryId], references: [id])
+  sku                    String                  @unique // Mã NVL (VD: NVL-KEM-DO-01)
+  name                   String
+  unit                   String                  // cuộn, cây, m, cái, túi
+  defaultPrice           Decimal                 @default(0) @map("default_price") @db.Decimal(14, 2)
+  minStockAlert          Decimal                 @default(0) @map("min_stock_alert") @db.Decimal(12, 2)
+  isActive               Boolean                 @default(true) @map("is_active")
+  notes                  String?
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  deletedAt              DateTime?               @map("deleted_at")
+
+  inventory              MaterialInventory?
+  purchaseReceiptItems   PurchaseReceiptItem[]
+  recipeItems            RecipeItem[]
+  stockDocumentItems     StockDocumentItem[]
+  productionConsumptions ProductionConsumption[]
+
+  @@index([categoryId])
+  @@map("materials")
+}
+
+model Supplier {
+  id               String            @id @default(uuid())
+  code             String            @unique // VD: NCC-001
+  name             String
+  phone            String?
+  address          String?
+  notes            String?
+  purchaseReceipts PurchaseReceipt[]
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  deletedAt        DateTime?         @map("deleted_at")
+
+  @@map("suppliers")
+}
+
+enum ReceiptStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+model PurchaseReceipt {
+  id                    String                 @id @default(uuid())
+  code                  String                 @unique // VD: PNK-202611-001
+  supplierId            String                 @map("supplier_id")
+  supplier              Supplier               @relation(fields: [supplierId], references: [id])
+  createdById           String                 @map("created_by_id")
+  createdBy             User                   @relation(fields: [createdById], references: [id])
+  receiptDate           DateTime               @default(now()) @map("receipt_date")
+  totalAmount           Decimal                @map("total_amount") @db.Decimal(14, 2)
+  status                ReceiptStatus          @default(CONFIRMED)
+  notes                 String?
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+
+  items                 PurchaseReceiptItem[]
+  financialTransactions FinancialTransaction[]
+
+  @@index([supplierId])
+  @@map("purchase_receipts")
+}
+
+model PurchaseReceiptItem {
+  id         String          @id @default(uuid())
+  receiptId  String          @map("receipt_id")
+  receipt    PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  materialId String          @map("material_id")
+  material   Material        @relation(fields: [materialId], references: [id])
+  quantity   Decimal         @db.Decimal(12, 2)
+  unitPrice  Decimal         @map("unit_price") @db.Decimal(14, 2)
+  lineTotal  Decimal         @map("line_total") @db.Decimal(14, 2)
+
+  @@index([receiptId])
+  @@index([materialId])
+  @@map("purchase_receipt_items")
+}
+
+// ==========================================
+// 3. SẢN PHẨM & CÔNG THỨC SẢN XUẤT (BOM)
+// ==========================================
+
+enum ProductType {
+  FINISHED      // Thành phẩm hoàn chỉnh (bó hoa, giỏ hoa)
+  INTERMEDIATE  // Bán thành phẩm / SP trung gian (cành hoa rời)
+}
+
+model ProductCategory {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  name      String
+  products  Product[]
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@map("product_categories")
+}
+
+model Product {
+  id                       String                  @id @default(uuid())
+  categoryId               String                  @map("category_id")
+  category                 ProductCategory         @relation(fields: [categoryId], references: [id])
+  sku                      String                  @unique // VD: SP-TULIP-DO-01
+  name                     String
+  imageUrl                 String?                 @map("image_url")
+  type                     ProductType             @default(FINISHED)
+  sellingPrice             Decimal                 @default(0) @map("selling_price") @db.Decimal(14, 2)
+  description              String?
+  isActive                 Boolean                 @default(true) @map("is_active")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
+  deletedAt                DateTime?               @map("deleted_at")
+
+  inventory                ProductInventory?
+  recipes                  Recipe[]
+  recipeItemsAsSubProduct  RecipeItem[]            @relation("SubProductRecipeItems")
+  stockDocumentItems       StockDocumentItem[]
+  productionOrders         ProductionOrder[]
+  productionConsumptions   ProductionConsumption[]
+  orderItems               OrderItem[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Recipe {
+  id               String            @id @default(uuid())
+  productId        String            @map("product_id")
+  product          Product           @relation(fields: [productId], references: [id])
+  version          Int               @default(1)
+  name             String
+  isActive         Boolean           @default(true) @map("is_active")
+  expectedCost     Decimal           @default(0) @map("expected_cost") @db.Decimal(14, 2)
+  notes            String?
+  createdById      String            @map("created_by_id")
+  createdBy        User              @relation(fields: [createdById], references: [id])
+  createdAt        DateTime          @default(now()) @map("created_at")
+
+  items            RecipeItem[]
+  productionOrders ProductionOrder[]
+
+  @@unique([productId, version])
+  @@map("recipes")
+}
+
+enum RecipeItemType {
+  MATERIAL
+  SUB_PRODUCT
+}
+
+model RecipeItem {
+  id           String         @id @default(uuid())
+  recipeId     String         @map("recipe_id")
+  recipe       Recipe         @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  itemType     RecipeItemType @map("item_type")
+  materialId   String?        @map("material_id")
+  material     Material?      @relation(fields: [materialId], references: [id])
+  subProductId String?        @map("sub_product_id")
+  subProduct   Product?       @relation("SubProductRecipeItems", fields: [subProductId], references: [id])
+  quantity     Decimal        @db.Decimal(12, 4)
+  lossRate     Decimal        @default(0) @map("loss_rate") @db.Decimal(5, 2) // % hao hụt
+  snapshotCost Decimal        @default(0) @map("snapshot_cost") @db.Decimal(14, 2)
+
+  @@index([recipeId])
+  @@map("recipe_items")
+}
+
+// ==========================================
+// 4. KHO & SỔ CÁI CHỨNG TỪ (LEDGER)
+// ==========================================
+
+model MaterialInventory {
+  id         String   @id @default(uuid())
+  materialId String   @unique @map("material_id")
+  material   Material @relation(fields: [materialId], references: [id])
+  quantity   Decimal  @default(0) @db.Decimal(12, 2)
+  avgCost    Decimal  @default(0) @map("avg_cost") @db.Decimal(14, 2) // MWAC
+  version    Int      @default(1) // Optimistic concurrency
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("material_inventory")
+}
+
+model ProductInventory {
+  id               String   @id @default(uuid())
+  productId        String   @unique @map("product_id")
+  product          Product  @relation(fields: [productId], references: [id])
+  actualQuantity   Decimal  @default(0) @map("actual_quantity") @db.Decimal(12, 2)
+  reservedQuantity Decimal  @default(0) @map("reserved_quantity") @db.Decimal(12, 2)
+  avgCost          Decimal  @default(0) @map("avg_cost") @db.Decimal(14, 2)
+  version          Int      @default(1)
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("product_inventory")
+}
+
+enum StockDocumentType {
+  PURCHASE_IMPORT
+  PRODUCTION_EXPORT
+  PRODUCTION_IMPORT
+  SALE_EXPORT
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  ORDER_CANCEL_RETURN
+}
+
+enum StockReferenceType {
+  PURCHASE_RECEIPT
+  PRODUCTION_ORDER
+  ORDER
+  MANUAL
+}
+
+enum WarehouseType {
+  MATERIAL
+  PRODUCT
+}
+
+model StockDocument {
+  id            String              @id @default(uuid())
+  code          String              @unique // VD: CTK-202611-001
+  type          StockDocumentType
+  referenceType StockReferenceType  @map("reference_type")
+  referenceId   String?             @map("reference_id")
+  warehouseType WarehouseType       @map("warehouse_type")
+  issuedById    String              @map("issued_by_id")
+  issuedBy      User                @relation(fields: [issuedById], references: [id])
+  notes         String?
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  items         StockDocumentItem[]
+
+  @@index([referenceId])
+  @@map("stock_documents")
+}
+
+model StockDocumentItem {
+  id         String        @id @default(uuid())
+  documentId String        @map("document_id")
+  document   StockDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  materialId String?       @map("material_id")
+  material   Material?     @relation(fields: [materialId], references: [id])
+  productId  String?       @map("product_id")
+  product    Product?      @relation(fields: [productId], references: [id])
+  qtyBefore  Decimal       @map("qty_before") @db.Decimal(12, 2)
+  qtyChange  Decimal       @map("qty_change") @db.Decimal(12, 2)
+  qtyAfter   Decimal       @map("qty_after") @db.Decimal(12, 2)
+  unitCost   Decimal       @map("unit_cost") @db.Decimal(14, 2)
+  totalCost  Decimal       @map("total_cost") @db.Decimal(14, 2)
+
+  @@index([documentId])
+  @@map("stock_document_items")
+}
+
+// ==========================================
+// 5. QUẢN LÝ SẢN XUẤT (MTS & MTO)
+// ==========================================
+
+enum ProductionType {
+  MAKE_TO_STOCK
+  MAKE_TO_ORDER
+}
+
+enum ProductionStatus {
+  DRAFT
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model ProductionOrder {
+  id                  String                  @id @default(uuid())
+  code                String                  @unique // VD: LSX-202611-001
+  type                ProductionType          @default(MAKE_TO_STOCK)
+  productId           String                  @map("product_id")
+  product             Product                 @relation(fields: [productId], references: [id])
+  recipeId            String                  @map("recipe_id")
+  recipe              Recipe                  @relation(fields: [recipeId], references: [id])
+  linkedOrderId       String?                 @map("linked_order_id")
+  linkedOrder         Order?                  @relation(fields: [linkedOrderId], references: [id])
+  plannedQuantity     Decimal                 @map("planned_quantity") @db.Decimal(12, 2)
+  completedQuantity   Decimal                 @default(0) @map("completed_quantity") @db.Decimal(12, 2)
+  totalProductionCost Decimal                 @default(0) @map("total_production_cost") @db.Decimal(14, 2)
+  unitProductionCost  Decimal                 @default(0) @map("unit_production_cost") @db.Decimal(14, 2)
+  status              ProductionStatus        @default(PLANNED)
+  createdById         String                  @map("created_by_id")
+  createdBy           User                    @relation(fields: [createdById], references: [id])
+  startDate           DateTime?               @map("start_date")
+  completedDate       DateTime?               @map("completed_date")
+  notes               String?
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  consumptions        ProductionConsumption[]
+
+  @@index([productId])
+  @@index([linkedOrderId])
+  @@map("production_orders")
+}
+
+model ProductionConsumption {
+  id                String          @id @default(uuid())
+  productionOrderId String          @map("production_order_id")
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  itemType          RecipeItemType  @map("item_type")
+  materialId        String?         @map("material_id")
+  material          Material?       @relation(fields: [materialId], references: [id])
+  subProductId      String?         @map("sub_product_id")
+  subProduct        Product?        @relation(fields: [subProductId], references: [id])
+  plannedQuantity   Decimal         @map("planned_quantity") @db.Decimal(12, 4)
+  actualQuantity    Decimal         @map("actual_quantity") @db.Decimal(12, 4)
+  unitCostSnapshot  Decimal         @map("unit_cost_snapshot") @db.Decimal(14, 2)
+  totalCost         Decimal         @map("total_cost") @db.Decimal(14, 2)
+
+  @@index([productionOrderId])
+  @@map("production_consumptions")
+}
+
+// ==========================================
+// 6. KHÁCH HÀNG, ĐƠN HÀNG & THANH TOÁN
+// ==========================================
+
+model Customer {
+  id                String    @id @default(uuid())
+  code              String    @unique // VD: KH-001
+  fullName          String    @map("full_name")
+  phone             String    @unique
+  address           String?
+  notes             String?
+  totalOrdersCount  Int       @default(0) @map("total_orders_count")
+  totalSpent        Decimal   @default(0) @map("total_spent") @db.Decimal(14, 2)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  orders            Order[]
+
+  @@index([phone])
+  @@map("customers")
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  READY
+  SHIPPING
+  COMPLETED
+  CANCELLED
+}
+
+model Order {
+  id                    String                 @id @default(uuid())
+  code                  String                 @unique // VD: DH-202611-001
+  customerId            String                 @map("customer_id")
+  customer              Customer               @relation(fields: [customerId], references: [id])
+  createdById           String                 @map("created_by_id")
+  createdBy             User                   @relation(fields: [createdById], references: [id])
+  orderDate             DateTime               @default(now()) @map("order_date")
+  expectedDeliveryDate  DateTime?              @map("expected_delivery_date")
+  status                OrderStatus            @default(PENDING)
+  subtotal              Decimal                @default(0) @db.Decimal(14, 2)
+  discountAmount        Decimal                @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  shippingFeeCollected  Decimal                @default(0) @map("shipping_fee_collected") @db.Decimal(14, 2) // Khách trả
+  shippingCostPaid      Decimal                @default(0) @map("shipping_cost_paid") @db.Decimal(14, 2) // Tiệm trả shipper
+  totalAmount           Decimal                @default(0) @map("total_amount") @db.Decimal(14, 2)
+  depositAmount         Decimal                @default(0) @map("deposit_amount") @db.Decimal(14, 2)
+  paidAmount            Decimal                @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  remainingAmount       Decimal                @default(0) @map("remaining_amount") @db.Decimal(14, 2)
+  totalCogs             Decimal                @default(0) @map("total_cogs") @db.Decimal(14, 2) // Giá vốn hàng bán
+  deliveryAddress       String?                @map("delivery_address")
+  notes                 String?
+  version               Int                    @default(1)
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+
+  items                 OrderItem[]
+  payments              Payment[]
+  productionOrders      ProductionOrder[]
+  financialTransactions FinancialTransaction[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id               String   @id @default(uuid())
+  orderId          String   @map("order_id")
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId        String   @map("product_id")
+  product          Product  @relation(fields: [productId], references: [id])
+  quantity         Decimal  @db.Decimal(12, 2)
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(14, 2)
+  unitCogsSnapshot Decimal  @default(0) @map("unit_cogs_snapshot") @db.Decimal(14, 2)
+  discount         Decimal  @default(0) @db.Decimal(14, 2)
+  lineTotal        Decimal  @map("line_total") @db.Decimal(14, 2)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+enum PaymentType {
+  DEPOSIT
+  FINAL_PAYMENT
+  FULL_PAYMENT
+  REFUND
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+}
+
+model Payment {
+  id                    String                 @id @default(uuid())
+  code                  String                 @unique // VD: TT-202611-001
+  orderId               String                 @map("order_id")
+  order                 Order                  @relation(fields: [orderId], references: [id])
+  collectedById         String                 @map("collected_by_id")
+  collectedBy           User                   @relation(fields: [collectedById], references: [id])
+  paymentType           PaymentType            @map("payment_type")
+  paymentMethod         PaymentMethod          @map("payment_method")
+  amount                Decimal                @db.Decimal(14, 2)
+  paymentDate           DateTime               @default(now()) @map("payment_date")
+  transactionReference  String?                @map("transaction_reference")
+  notes                 String?
+  createdAt             DateTime               @default(now()) @map("created_at")
+
+  financialTransactions FinancialTransaction[]
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+// ==========================================
+// 7. TÀI CHÍNH, SỔ QUỸ THU CHI & KẾ TOÁN
+// ==========================================
+
+enum ExpenseType {
+  OPERATING
+  MATERIAL_PURCHASE
+  SHIPPING
+  PACKAGING
+  OTHER
+}
+
+model ExpenseCategory {
+  id                    String                 @id @default(uuid())
+  code                  String                 @unique
+  name                  String
+  type                  ExpenseType            @default(OPERATING)
+  financialTransactions FinancialTransaction[]
+  createdAt             DateTime               @default(now()) @map("created_at")
+  deletedAt             DateTime?              @map("deleted_at")
+
+  @@map("expense_categories")
+}
+
+enum CashFlowType {
+  INFLOW
+  OUTFLOW
+}
+
+model FinancialTransaction {
+  id               String           @id @default(uuid())
+  code             String           @unique // VD: SQ-202611-001
+  flowType         CashFlowType     @map("flow_type")
+  categoryId       String?          @map("category_id")
+  category         ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  paymentMethod    PaymentMethod    @map("payment_method")
+  amount           Decimal          @db.Decimal(14, 2)
+  sourceOrderId    String?          @map("source_order_id")
+  sourceOrder      Order?           @relation(fields: [sourceOrderId], references: [id])
+  sourcePurchaseId String?          @map("source_purchase_id")
+  sourcePurchase   PurchaseReceipt? @relation(fields: [sourcePurchaseId], references: [id])
+  paymentId        String?          @map("payment_id")
+  payment          Payment?         @relation(fields: [paymentId], references: [id])
+  performedById    String           @map("performed_by_id")
+  performedBy      User             @relation(fields: [performedById], references: [id])
+  transactionDate  DateTime         @default(now()) @map("transaction_date")
+  description      String
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  @@index([flowType])
+  @@index([transactionDate])
+  @@map("financial_transactions")
+}
+
+// ==========================================
+// 8. CẤU HÌNH & NHẬT KÝ KIỂM TOÁN
+// ==========================================
+
+model Setting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String   @map("entity_id")
+  oldValues Json?    @map("old_values")
+  newValues Json?    @map("new_values")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
