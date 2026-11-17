@@ -36,6 +36,7 @@ async function ensureDatabaseRunning() {
   if (!is5432Open && env.NODE_ENV !== 'production') {
     console.log('🐘 [Auto-Database] Không tìm thấy PostgreSQL ngoài cổng 5432, đang tự động khởi chạy PGlite Server...');
     try {
+      // @ts-ignore
       const { PGlite } = await import('@electric-sql/pglite');
       // @ts-ignore
       const { createServer: createPgServer } = await import('pglite-server');
