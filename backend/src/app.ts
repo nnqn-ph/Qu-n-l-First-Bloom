@@ -1,4 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
+import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -73,7 +75,25 @@ app.use('/api/v1', productionRoutes);
 app.use('/api/v1', ordersRoutes);
 app.use('/api/v1', financeRoutes);
 
-// 5. 404 Handler cho endpoint không tồn tại
+// 5. Phục vụ Frontend Static Files (Khi build production hoặc deploy Render)
+const possibleDistPaths = [
+  path.resolve(__dirname, '../../frontend/dist'),
+  path.resolve(__dirname, '../frontend/dist'),
+  path.resolve(process.cwd(), 'frontend/dist'),
+  path.resolve(process.cwd(), '../frontend/dist'),
+];
+const frontendDistPath = possibleDistPaths.find((p) => fs.existsSync(p));
+if (frontendDistPath) {
+  app.use(express.static(frontendDistPath));
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/socket.io')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDistPath, 'index.html'));
+  });
+}
+
+// 6. 404 Handler cho endpoint không tồn tại
 app.use((req: Request, res: Response) => {
   sendError(res, `Endpoint '${req.method} ${req.originalUrl}' không tồn tại trên hệ thống`, 404);
 });

@@ -15,7 +15,7 @@ import {
   X,
   AlertCircle,
 } from 'lucide-react';
-import { io } from 'socket.io-client';
+import { getSocket } from '../services/socket';
 
 interface ExpenseCategory {
   id: string;
@@ -139,17 +139,17 @@ export const FinancePage: React.FC = () => {
 
   // Real-time synchronization via WebSocket
   useEffect(() => {
-    const socket = io('http://localhost:5000', {
-      withCredentials: true,
-    });
+    const socket = getSocket();
 
-    socket.on('FINANCE_UPDATED', () => {
+    const handleFinanceUpdated = () => {
       queryClient.invalidateQueries({ queryKey: ['financial-transactions'] });
       queryClient.invalidateQueries({ queryKey: ['reports-pnl'] });
-    });
+    };
+
+    socket.on('FINANCE_UPDATED', handleFinanceUpdated);
 
     return () => {
-      socket.disconnect();
+      socket.off('FINANCE_UPDATED', handleFinanceUpdated);
     };
   }, [queryClient]);
 

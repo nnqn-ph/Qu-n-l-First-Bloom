@@ -64,9 +64,9 @@ async function startServer() {
     console.log('✅ [Database] Kết nối PostgreSQL thành công!');
 
     const port = parseInt(env.PORT, 10) || 5000;
-    server.listen(port, () => {
-      console.log(`🌸 [First Bloom API] Server đang chạy tại: http://localhost:${port}`);
-      console.log(`🔌 [Socket.IO] Realtime Gateway sẵn sàng tại ws://localhost:${port}`);
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`🌸 [First Bloom API] Server đang chạy tại: http://0.0.0.0:${port}`);
+      console.log(`🔌 [Socket.IO] Realtime Gateway sẵn sàng tại ws://0.0.0.0:${port}`);
     });
   } catch (error) {
     console.error('❌ [Server Error]:', error);
