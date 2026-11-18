@@ -1,10 +1,12 @@
 import http from 'http';
 import net from 'net';
 import path from 'path';
+import { execSync } from 'child_process';
 import { app } from './app';
 import { env } from './config/env';
 import { initSocketServer } from './websocket/socket.server';
 import { prisma } from './config/prisma';
+import { seedDatabase } from './config/seed';
 
 const server = http.createServer(app);
 
@@ -56,13 +58,43 @@ async function ensureDatabaseRunning() {
   }
 }
 
+async function ensureDatabaseSchema() {
+  try {
+    console.log('🔄 [Database] Đang kiểm tra và đồng bộ cấu trúc bảng PostgreSQL...');
+    const backendDir = path.resolve(__dirname, '..');
+    execSync('npx prisma db push --accept-data-loss', {
+      cwd: backendDir,
+      stdio: 'inherit',
+      env: { ...process.env, DATABASE_URL: env.DATABASE_URL },
+    });
+    console.log('✅ [Database] Đã đồng bộ cấu trúc bảng thành công!');
+  } catch (err: any) {
+    console.warn('⚠️ [Database] prisma db push cảnh báo:', err?.message || err);
+  }
+}
+
 async function startServer() {
   try {
     await ensureDatabaseRunning();
+    await ensureDatabaseSchema();
 
     // Kết nối Prisma với Database
     await prisma.$connect();
     console.log('✅ [Database] Kết nối PostgreSQL thành công!');
+
+    // Tự động kiểm tra và khởi tạo dữ liệu mẫu & Admin nếu database mới
+    try {
+      const adminCount = await prisma.user.count({ where: { roleId: 'ADMIN' } });
+      if (adminCount === 0) {
+        console.log('🌱 [Database] Cơ sở dữ liệu mới, đang tự động khởi tạo Roles, Tài khoản Admin và Dữ liệu mẫu...');
+        await seedDatabase(prisma);
+        console.log('✅ [Database] Đã tạo tài khoản Admin và dữ liệu mẫu thành công!');
+      } else {
+        console.log(`ℹ️ [Database] Đã có ${adminCount} tài khoản Admin trong hệ thống.`);
+      }
+    } catch (seedErr: any) {
+      console.warn('⚠️ [Database] Lỗi khi auto-seed:', seedErr?.message || seedErr);
+    }
 
     const port = parseInt(env.PORT, 10) || 5000;
     server.listen(port, '0.0.0.0', () => {
