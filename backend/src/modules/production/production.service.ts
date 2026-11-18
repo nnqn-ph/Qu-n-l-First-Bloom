@@ -16,6 +16,7 @@ import {
   WarehouseType,
 } from '@prisma/client';
 import { broadcastSyncEvent, WsEvent } from '../../websocket/socket.server';
+import { generateSafeCode } from '../../common/code-generator';
 
 export class ProductionService {
   // ==========================================
@@ -320,16 +321,12 @@ export class ProductionService {
 
     const recipe = product.recipes[0];
 
-    // Sinh mã lệnh sản xuất LSX-YYYYMM-XXXX
     const now = new Date();
     const prefix = `LSX-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const countThisMonth = await prisma.productionOrder.count({
-      where: { code: { startsWith: prefix } },
-    });
-    const code = `${prefix}-${String(countThisMonth + 1).padStart(4, '0')}`;
 
     // Tạo lệnh sản xuất và các dòng dự trù tiêu hao (Planned Consumptions) trong Transaction
     const newOrder = await prisma.$transaction(async (tx: any) => {
+      const code = await generateSafeCode(tx, 'productionOrder', prefix);
       const order = await tx.productionOrder.create({
         data: {
           code,
@@ -416,13 +413,10 @@ export class ProductionService {
 
     const now = new Date();
     const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCount = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
     // Transaction xuất kho nguyên vật liệu với Pessimistic Row Locking
     await prisma.$transaction(async (tx: any) => {
+      const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
       // 1. Tạo chứng từ xuất kho sản xuất
       const stockDoc = await tx.stockDocument.create({
         data: {
@@ -623,15 +617,17 @@ export class ProductionService {
       throw new Error(`Lệnh sản xuất đang ở trạng thái '${order.status}', chỉ có thể hoàn thành lệnh 'IN_PROGRESS'`);
     }
 
+    if (!dto.completedQuantity || dto.completedQuantity <= 0) {
+      throw new Error('Số lượng sản xuất hoàn thành phải lớn hơn 0');
+    }
+
     const now = new Date();
     const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCount = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
     // Transaction hoàn thành sản xuất, nhập kho thành phẩm và tính giá vốn MWAC
     await prisma.$transaction(async (tx: any) => {
+      const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
+
       // 1. Tính tổng chi phí sản xuất thực tế = Tổng chi phí NVL xuất kho + Chi phí phụ thêm
       const materialCost = Number(order.totalProductionCost);
       const additionalCost = Number(dto.additionalCost || 0);
@@ -650,6 +646,7 @@ export class ProductionService {
       `;
 
       const oldQty = currentRows.length > 0 ? Number(currentRows[0].actual_quantity) : 0;
+      const oldReserved = currentRows.length > 0 ? Number(currentRows[0].reserved_quantity) : 0;
       const oldAvgCost = currentRows.length > 0 ? Number(currentRows[0].avg_cost) : 0;
       const currentVersion = currentRows.length > 0 ? currentRows[0].version : 1;
 
@@ -661,7 +658,12 @@ export class ProductionService {
         newAvgCost = Number(((oldQty * oldAvgCost + completedQty * unitCost) / newQty).toFixed(2));
       }
 
-      // 4. Tạo chứng từ nhập kho thành phẩm
+      // 4. Nếu là lệnh sản xuất theo đơn MTO (Make-to-Order):
+      // Giữ chỗ (reserve) ngay phần hàng mới sản xuất này cho đơn hàng tương ứng
+      const isMto = order.type === ProductionType.MAKE_TO_ORDER && Boolean(order.linkedOrderId);
+      const newReserved = isMto ? oldReserved + completedQty : oldReserved;
+
+      // 5. Tạo chứng từ nhập kho thành phẩm
       const stockDoc = await tx.stockDocument.create({
         data: {
           code: docCode,
@@ -674,7 +676,7 @@ export class ProductionService {
         },
       });
 
-      // 5. Ghi thẻ kho thành phẩm
+      // 6. Ghi thẻ kho thành phẩm
       await tx.stockDocumentItem.create({
         data: {
           documentId: stockDoc.id,
@@ -687,24 +689,65 @@ export class ProductionService {
         },
       });
 
-      // 6. Cập nhật tồn kho thành phẩm
+      // 7. Cập nhật tồn kho thành phẩm
       await tx.productInventory.upsert({
         where: { productId: order.productId },
         update: {
           actualQuantity: newQty,
+          reservedQuantity: newReserved,
           avgCost: newAvgCost,
           version: currentVersion + 1,
         },
         create: {
           productId: order.productId,
           actualQuantity: newQty,
-          reservedQuantity: 0,
+          reservedQuantity: isMto ? completedQty : 0,
           avgCost: newAvgCost,
           version: 1,
         },
       });
 
-      // 7. Cập nhật lệnh sản xuất sang COMPLETED
+      // 8. Nếu là MTO: Cập nhật giá vốn thực tế vào đơn hàng liên kết (Linked Order)
+      if (isMto && order.linkedOrderId) {
+        // Cập nhật giá vốn snapshot dòng sản phẩm trong đơn hàng
+        await tx.orderItem.updateMany({
+          where: {
+            orderId: order.linkedOrderId,
+            productId: order.productId,
+          },
+          data: {
+            unitCogsSnapshot: unitCost,
+          },
+        });
+
+        // Tính lại tổng giá vốn (totalCogs) cho đơn hàng
+        const orderItems = await tx.orderItem.findMany({
+          where: { orderId: order.linkedOrderId },
+        });
+        const updatedTotalCogs = orderItems.reduce((sum: number, it: any) => {
+          const itCost = it.productId === order.productId ? unitCost : Number(it.unitCogsSnapshot);
+          return sum + Number(it.quantity) * itCost;
+        }, 0);
+
+        await tx.order.update({
+          where: { id: order.linkedOrderId },
+          data: { totalCogs: updatedTotalCogs },
+        });
+
+        console.log(`🌸 [MTO-Cost] Đã đồng bộ giá vốn thực tế (${unitCost.toLocaleString()} đ) cho đơn hàng linkedOrderId: ${order.linkedOrderId}`);
+      }
+
+      // 9. Ghi nhận chênh lệch số lượng thực tế vs kế hoạch
+      const plannedQty = Number(order.plannedQuantity);
+      const diff = completedQty - plannedQty;
+      let diffNote = '';
+      if (diff < 0) {
+        diffNote = `\n[Hao hụt/Thiếu]: Thiếu ${Math.abs(diff)} bó so với kế hoạch (${plannedQty})`;
+      } else if (diff > 0) {
+        diffNote = `\n[Vượt kế hoạch]: Dôi dư ${diff} bó so với kế hoạch (${plannedQty})`;
+      }
+
+      // 10. Cập nhật lệnh sản xuất sang COMPLETED
       await tx.productionOrder.update({
         where: { id: order.id },
         data: {
@@ -713,7 +756,9 @@ export class ProductionService {
           completedDate: now,
           totalProductionCost: totalCost,
           unitProductionCost: unitCost,
-          notes: dto.notes ? `${order.notes || ''}\n[Hoàn thành]: ${dto.notes}`.trim() : order.notes,
+          notes: dto.notes
+            ? `${order.notes || ''}\n[Hoàn thành]: ${dto.notes}${diffNote}`.trim()
+            : `${order.notes || ''}${diffNote}`.trim(),
         },
       });
 
@@ -780,12 +825,9 @@ export class ProductionService {
     if (order.status === ProductionStatus.IN_PROGRESS) {
       const now = new Date();
       const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const docCount = await prisma.stockDocument.count({
-        where: { code: { startsWith: docPrefix } },
-      });
-      const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
       await prisma.$transaction(async (tx: any) => {
+        const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
         const stockDoc = await tx.stockDocument.create({
           data: {
             code: docCode,
@@ -945,12 +987,9 @@ export class ProductionService {
 
     const now = new Date();
     const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCount = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
     return prisma.$transaction(async (tx: any) => {
+      const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
       // Row lock
       const currentRows = await tx.$queryRaw<
         Array<{ actual_quantity: any; reserved_quantity: any; avg_cost: any; version: number }>

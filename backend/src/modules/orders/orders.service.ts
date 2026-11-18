@@ -19,6 +19,17 @@ import {
   ProductionStatus,
 } from '@prisma/client';
 import { broadcastSyncEvent, WsEvent } from '../../websocket/socket.server';
+import { generateSafeCode } from '../../common/code-generator';
+
+const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.READY, OrderStatus.CANCELLED],
+  [OrderStatus.PROCESSING]: [OrderStatus.READY, OrderStatus.CANCELLED],
+  [OrderStatus.READY]: [OrderStatus.SHIPPING, OrderStatus.COMPLETED, OrderStatus.CANCELLED],
+  [OrderStatus.SHIPPING]: [OrderStatus.COMPLETED, OrderStatus.CANCELLED],
+  [OrderStatus.COMPLETED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
 
 export class OrdersService {
   // ==========================================
@@ -102,13 +113,10 @@ export class OrdersService {
       throw new Error(`Số điện thoại '${dto.phone}' đã được đăng ký cho khách hàng '${existing.fullName}'`);
     }
 
-    // Sinh mã khách hàng KH-YYYYMM-XXXX
+    // Sinh mã khách hàng KH-YYYYMM-XXXX an toàn, chống trùng
     const now = new Date();
     const prefix = `KH-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const countThisMonth = await prisma.customer.count({
-      where: { code: { startsWith: prefix } },
-    });
-    const code = `${prefix}-${String(countThisMonth + 1).padStart(4, '0')}`;
+    const code = await generateSafeCode(prisma, 'customer', prefix);
 
     const customer = await prisma.customer.create({
       data: {
@@ -128,6 +136,13 @@ export class OrdersService {
         entityId: customer.id,
         newValues: customer,
       },
+    });
+
+    broadcastSyncEvent(WsEvent.CUSTOMER_UPDATED, {
+      entity: 'CUSTOMER',
+      action: 'CREATED',
+      timestamp: new Date().toISOString(),
+      data: { customerId: customer.id, code: customer.code },
     });
 
     return {
@@ -170,6 +185,13 @@ export class OrdersService {
         oldValues: customer,
         newValues: updated,
       },
+    });
+
+    broadcastSyncEvent(WsEvent.CUSTOMER_UPDATED, {
+      entity: 'CUSTOMER',
+      action: 'UPDATED',
+      timestamp: new Date().toISOString(),
+      data: { customerId: updated.id, code: updated.code },
     });
 
     return {
@@ -359,30 +381,13 @@ export class OrdersService {
   async createOrder(dto: CreateOrderDto, userId: string) {
     const now = new Date();
 
-    // 1. Sinh mã đơn hàng DH-YYYYMM-XXXX
-    const prefix = `DH-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const countThisMonth = await prisma.order.count({
-      where: { code: { startsWith: prefix } },
-    });
-    const orderCode = `${prefix}-${String(countThisMonth + 1).padStart(4, '0')}`;
-
-    // Sinh mã thanh toán nếu có cọc
-    const payPrefix = `TT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const payCount = await prisma.payment.count({
-      where: { code: { startsWith: payPrefix } },
-    });
-    const paymentCode = `${payPrefix}-${String(payCount + 1).padStart(4, '0')}`;
-
-    // Sinh mã phiếu thu sổ quỹ
-    const sqPrefix = `PT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const sqCount = await prisma.financialTransaction.count({
-      where: { code: { startsWith: sqPrefix } },
-    });
-    const financialCode = `${sqPrefix}-${String(sqCount + 1).padStart(4, '0')}`;
-
-    // Transaction chính
+    // Transaction chính với Row Locking và Giữ chỗ an toàn
     const result = await prisma.$transaction(async (tx: any) => {
-      // 1. Khách hàng: Lấy khách cũ hoặc tạo khách mới
+      // 1. Sinh mã đơn hàng an toàn bên trong transaction
+      const orderPrefix = `DH-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const orderCode = await generateSafeCode(tx, 'order', orderPrefix);
+
+      // 2. Khách hàng: Lấy khách cũ hoặc tạo khách mới
       let customerId = dto.customerId;
       if (!customerId && dto.customer) {
         let existingCust = await tx.customer.findUnique({
@@ -393,10 +398,10 @@ export class OrdersService {
           customerId = existingCust.id;
         } else {
           const custPrefix = `KH-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-          const cCount = await tx.customer.count({ where: { code: { startsWith: custPrefix } } });
+          const custCode = await generateSafeCode(tx, 'customer', custPrefix);
           const newCust = await tx.customer.create({
             data: {
-              code: `${custPrefix}-${String(cCount + 1).padStart(4, '0')}`,
+              code: custCode,
               fullName: dto.customer.fullName.trim(),
               phone: dto.customer.phone.trim(),
               address: dto.customer.address?.trim() || null,
@@ -411,13 +416,13 @@ export class OrdersService {
         throw new Error('Không xác định được khách hàng');
       }
 
-      // 2. Tính toán tiền hàng và kiểm tra tồn kho
+      // 3. Tính toán tiền hàng và kiểm tra tồn kho chi tiết
       let subtotal = 0;
       let totalCogs = 0;
       const calculatedItems = [];
 
       for (const item of dto.items) {
-        // Lock row product_inventory
+        // Khóa hàng tồn kho thành phẩm (Row Lock)
         const currentProdRows = await tx.$queryRaw<
           Array<{ actual_quantity: any; reserved_quantity: any; avg_cost: any; version: number }>
         >`
@@ -436,22 +441,44 @@ export class OrdersService {
         const avgCost = Number(currentProdRows[0].avg_cost);
         const version = currentProdRows[0].version;
 
+        // Tồn kho khả dụng = Tồn thực tế - Đã giữ chỗ
+        const availableStock = Math.max(0, actualQty - reservedQty);
+
+        // Nếu Bán có sẵn (không bật MTO): Bắt buộc tồn kho khả dụng phải đủ
+        if (!dto.createMtoProduction && availableStock < item.quantity) {
+          const product = await tx.product.findUnique({ where: { id: item.productId } });
+          const missingQty = item.quantity - availableStock;
+          throw new Error(
+            `Sản phẩm [${product?.sku || item.productId}] "${product?.name || ''}" không đủ hàng có sẵn để bán! (Khả dụng: ${availableStock}, Đặt: ${item.quantity}, Thiếu: ${missingQty}). Vui lòng chọn "Sản xuất theo đơn (MTO)" hoặc giảm số lượng đặt.`
+          );
+        }
+
+        // Tính toán phân bổ kho và sản xuất Make-to-Order:
+        // - Ưu tiên giữ chỗ số lượng thành phẩm đang có sẵn trong kho: min(availableStock, quantity)
+        const reservedFromStock = Math.min(availableStock, item.quantity);
+        // - Số lượng còn thiếu cần tạo lệnh sản xuất:
+        const neededToProduce = dto.createMtoProduction ? Math.max(0, item.quantity - reservedFromStock) : 0;
+
         const lineTotal = item.quantity * item.unitPrice - (item.discount || 0);
         subtotal += lineTotal;
         totalCogs += item.quantity * avgCost;
 
-        // Tăng reserved_quantity trong kho để giữ chỗ sản phẩm
-        await tx.productInventory.update({
-          where: { productId: item.productId },
-          data: {
-            reservedQuantity: reservedQty + item.quantity,
-            version: version + 1,
-          },
-        });
+        // Chỉ tăng reserved_quantity cho phần hàng ĐANG CÓ SẴN trong kho!
+        if (reservedFromStock > 0) {
+          await tx.productInventory.update({
+            where: { productId: item.productId },
+            data: {
+              reservedQuantity: reservedQty + reservedFromStock,
+              version: version + 1,
+            },
+          });
+        }
 
         calculatedItems.push({
           productId: item.productId,
           quantity: item.quantity,
+          reservedFromStock,
+          neededToProduce,
           unitPrice: item.unitPrice,
           unitCogsSnapshot: avgCost,
           discount: item.discount || 0,
@@ -464,10 +491,10 @@ export class OrdersService {
       const paidAmount = depositAmount;
       const remainingAmount = Math.max(0, totalAmount - paidAmount);
 
-      // Trạng thái: Nếu có cọc hoặc bán sẵn thì CONFIRMED, nếu chưa thì PENDING
+      // Trạng thái: Nếu có cọc hoặc thanh toán thì CONFIRMED, nếu chưa thì PENDING
       const initialStatus = depositAmount > 0 ? OrderStatus.CONFIRMED : OrderStatus.PENDING;
 
-      // 3. Tạo Đơn hàng
+      // 4. Tạo Đơn hàng
       const order = await tx.order.create({
         data: {
           code: orderCode,
@@ -489,7 +516,7 @@ export class OrdersService {
         },
       });
 
-      // 4. Tạo các dòng OrderItem
+      // 5. Tạo các dòng OrderItem
       for (const it of calculatedItems) {
         await tx.orderItem.create({
           data: {
@@ -504,8 +531,14 @@ export class OrdersService {
         });
       }
 
-      // 5. Nếu có tiền đặt cọc: Tạo Payment & FinancialTransaction (Phiếu thu)
+      // 6. Nếu có tiền đặt cọc: Tạo Payment & FinancialTransaction (Phiếu thu) an toàn
       if (depositAmount > 0) {
+        const payPrefix = `TT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const paymentCode = await generateSafeCode(tx, 'payment', payPrefix);
+
+        const sqPrefix = `PT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const financialCode = await generateSafeCode(tx, 'financialTransaction', sqPrefix);
+
         const payment = await tx.payment.create({
           data: {
             code: paymentCode,
@@ -532,13 +565,17 @@ export class OrdersService {
         });
       }
 
-      // 6. Nếu bật tùy chọn MTO (Make-to-Order), tự động sinh lệnh sản xuất theo đơn
+      // 7. Nếu bật tùy chọn MTO (Make-to-Order): Chỉ tạo lệnh sản xuất cho phần hàng CÒN THIẾU
       if (dto.createMtoProduction) {
         const prodPrefix = `LSX-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-        const pCount = await tx.productionOrder.count({ where: { code: { startsWith: prodPrefix } } });
 
-        for (let i = 0; i < calculatedItems.length; i++) {
-          const item = calculatedItems[i];
+        for (const item of calculatedItems) {
+          // Bỏ qua nếu kho đã có sẵn đủ hàng (neededToProduce === 0)
+          if (item.neededToProduce <= 0) {
+            console.log(`ℹ️ [MTO] Sản phẩm ${item.productId} đã đủ hàng có sẵn trong kho (${item.reservedFromStock} bó), không cần sản xuất thêm.`);
+            continue;
+          }
+
           const product = await tx.product.findUnique({
             where: { id: item.productId },
             include: { recipes: { where: { isActive: true }, take: 1, include: { items: true } } },
@@ -546,17 +583,18 @@ export class OrdersService {
 
           if (product && product.recipes.length > 0) {
             const recipe = product.recipes[0];
+            const pOrderCode = await generateSafeCode(tx, 'productionOrder', prodPrefix);
             const pOrder = await tx.productionOrder.create({
               data: {
-                code: `${prodPrefix}-${String(pCount + i + 1).padStart(4, '0')}`,
+                code: pOrderCode,
                 type: ProductionType.MAKE_TO_ORDER,
                 productId: product.id,
                 recipeId: recipe.id,
                 linkedOrderId: order.id,
-                plannedQuantity: item.quantity,
+                plannedQuantity: item.neededToProduce, // CHỈ SẢN XUẤT PHẦN CÒN THIẾU!
                 status: ProductionStatus.PLANNED,
                 createdById: userId,
-                notes: `Sản xuất theo đơn hàng ${order.code} cho khách hàng`,
+                notes: `Sản xuất theo đơn hàng ${order.code}: Cần sản xuất ${item.neededToProduce} bó còn thiếu (Kho đã giữ chỗ sẵn ${item.reservedFromStock} bó)`,
               },
             });
 
@@ -570,7 +608,7 @@ export class OrdersService {
                   itemType: rItem.itemType,
                   materialId: rItem.materialId,
                   subProductId: rItem.subProductId,
-                  plannedQuantity: effectiveQty * item.quantity,
+                  plannedQuantity: effectiveQty * item.neededToProduce,
                   actualQuantity: 0,
                   unitCostSnapshot: rItem.snapshotCost,
                   totalCost: 0,
@@ -581,12 +619,12 @@ export class OrdersService {
         }
       }
 
-      // 7. Cập nhật thống kê khách hàng
+      // 8. Cập nhật thống kê khách hàng (chỉ tăng totalSpent bằng tiền thực thu)
       await tx.customer.update({
         where: { id: customerId },
         data: {
           totalOrdersCount: { increment: 1 },
-          totalSpent: { increment: totalAmount },
+          totalSpent: { increment: depositAmount },
         },
       });
 
@@ -650,25 +688,40 @@ export class OrdersService {
       throw new Error('Đơn hàng không tồn tại');
     }
 
-    if (order.status === OrderStatus.COMPLETED) {
-      throw new Error('Đơn hàng đã hoàn thành, không thể thay đổi trạng thái');
+    if (order.status === dto.status) {
+      return this.getOrderById(order.id);
     }
 
-    if (order.status === OrderStatus.CANCELLED) {
-      throw new Error('Đơn hàng đã bị hủy, không thể thay đổi trạng thái');
+    // Kiểm tra quy tắc chuyển trạng thái hợp lệ (State Machine)
+    const allowedTransitions = VALID_TRANSITIONS[order.status] || [];
+    if (!allowedTransitions.includes(dto.status)) {
+      throw new Error(
+        `Không thể chuyển trạng thái đơn hàng từ '${order.status}' sang '${dto.status}'. Quy trình cho phép: ${allowedTransitions.join(', ') || 'Không có (đơn hàng đã kết thúc)'}`
+      );
     }
 
     const now = new Date();
-    const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCount = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
-    // Transaction chuyển đổi trạng thái
+    // Transaction chuyển đổi trạng thái với Pessimistic Locking
     await prisma.$transaction(async (tx: any) => {
       // 1. Chuyển sang COMPLETED: Xuất kho thành phẩm thực tế (SALE_EXPORT)
       if (dto.status === OrderStatus.COMPLETED) {
+        // Kiểm tra chống trừ kho và tạo chứng từ 2 lần
+        const existingDoc = await tx.stockDocument.findFirst({
+          where: {
+            referenceType: StockReferenceType.ORDER,
+            referenceId: order.id,
+            type: StockDocumentType.SALE_EXPORT,
+          },
+        });
+
+        if (existingDoc) {
+          throw new Error(`Đơn hàng ${order.code} đã được xuất kho thành phẩm trước đó (${existingDoc.code}), không thể xuất kho lần 2!`);
+        }
+
+        const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
+
         const stockDoc = await tx.stockDocument.create({
           data: {
             code: docCode,
@@ -725,7 +778,7 @@ export class OrdersService {
         }
       }
 
-      // 2. Chuyển sang CANCELLED: Giải phóng số lượng giữ chỗ (reserved_quantity)
+      // 2. Chuyển sang CANCELLED: Giải phóng số lượng giữ chỗ (reserved_quantity) và hủy lệnh sản xuất chưa chạy
       if (dto.status === OrderStatus.CANCELLED) {
         for (const item of order.items) {
           const qty = Number(item.quantity);
@@ -750,6 +803,18 @@ export class OrdersService {
             },
           });
         }
+
+        // Tự động hủy các lệnh sản xuất MTO gắn với đơn hàng đang ở trạng thái PLANNED hoặc DRAFT
+        await tx.productionOrder.updateMany({
+          where: {
+            linkedOrderId: order.id,
+            status: { in: [ProductionStatus.PLANNED, ProductionStatus.DRAFT] },
+          },
+          data: {
+            status: ProductionStatus.CANCELLED,
+            notes: `Hủy tự động do đơn hàng ${order.code} đã bị hủy`,
+          },
+        });
       }
 
       // 3. Cập nhật Order status
@@ -797,32 +862,62 @@ export class OrdersService {
   }
 
   /**
-   * Thêm thanh toán / tiền cọc cho đơn hàng
+   * Thêm thanh toán / tiền cọc / hoàn tiền cho đơn hàng với kiểm tra chặt chẽ
    */
   async addPayment(orderId: string, dto: AddPaymentDto, userId: string) {
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: { customer: true },
-    });
-
-    if (!order) {
-      throw new Error('Đơn hàng không tồn tại');
-    }
-
-    if (order.status === OrderStatus.CANCELLED) {
-      throw new Error('Không thể thanh toán cho đơn hàng đã bị hủy');
+    if (!dto.amount || dto.amount <= 0) {
+      throw new Error('Số tiền thanh toán phải lớn hơn 0');
     }
 
     const now = new Date();
-    const payPrefix = `TT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const pCount = await prisma.payment.count({ where: { code: { startsWith: payPrefix } } });
-    const paymentCode = `${payPrefix}-${String(pCount + 1).padStart(4, '0')}`;
-
-    const sqPrefix = `PT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const sqCount = await prisma.financialTransaction.count({ where: { code: { startsWith: sqPrefix } } });
-    const financialCode = `${sqPrefix}-${String(sqCount + 1).padStart(4, '0')}`;
 
     const newPayment = await prisma.$transaction(async (tx: any) => {
+      // Row lock order để chống race condition khi nhiều thiết bị bấm thanh toán đồng thời
+      const orderRows = await tx.$queryRaw<
+        Array<{ id: string; code: string; customer_id: string; total_amount: any; paid_amount: any; remaining_amount: any; status: string }>
+      >`
+        SELECT id, code, customer_id, total_amount, paid_amount, remaining_amount, status
+        FROM orders
+        WHERE id = ${orderId}
+        FOR UPDATE
+      `;
+
+      if (orderRows.length === 0) {
+        throw new Error('Đơn hàng không tồn tại');
+      }
+
+      const order = orderRows[0];
+      const currentPaid = Number(order.paid_amount);
+      const currentRemaining = Number(order.remaining_amount);
+      const currentTotal = Number(order.total_amount);
+
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new Error('Không thể thanh toán hoặc hoàn tiền cho đơn hàng đã bị hủy');
+      }
+
+      const isRefund = dto.paymentType === PaymentType.REFUND;
+
+      // Kiểm tra hạn mức thanh toán / hoàn tiền
+      if (!isRefund) {
+        if (dto.amount > currentRemaining) {
+          throw new Error(
+            `Số tiền thanh toán (${dto.amount.toLocaleString()} đ) không được vượt quá số tiền còn lại của đơn hàng (${currentRemaining.toLocaleString()} đ)`
+          );
+        }
+      } else {
+        if (dto.amount > currentPaid) {
+          throw new Error(
+            `Số tiền hoàn trả (${dto.amount.toLocaleString()} đ) không được vượt quá số tiền khách đã thanh toán (${currentPaid.toLocaleString()} đ)`
+          );
+        }
+      }
+
+      const payPrefix = `TT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const paymentCode = await generateSafeCode(tx, 'payment', payPrefix);
+
+      const sqPrefix = isRefund ? `PC-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}` : `PT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const financialCode = await generateSafeCode(tx, 'financialTransaction', sqPrefix);
+
       const payment = await tx.payment.create({
         data: {
           code: paymentCode,
@@ -832,7 +927,7 @@ export class OrdersService {
           paymentMethod: dto.paymentMethod,
           amount: dto.amount,
           transactionReference: dto.transactionReference || null,
-          notes: dto.notes || `Thanh toán cho đơn hàng ${order.code}`,
+          notes: dto.notes || `${isRefund ? 'Hoàn tiền' : 'Thanh toán'} cho đơn hàng ${order.code}`,
         },
       });
 
@@ -840,23 +935,22 @@ export class OrdersService {
       await tx.financialTransaction.create({
         data: {
           code: financialCode,
-          flowType: dto.paymentType === PaymentType.REFUND ? CashFlowType.OUTFLOW : CashFlowType.INFLOW,
+          flowType: isRefund ? CashFlowType.OUTFLOW : CashFlowType.INFLOW,
           paymentMethod: dto.paymentMethod,
           amount: dto.amount,
           sourceOrderId: order.id,
           paymentId: payment.id,
           performedById: userId,
-          description: `${dto.paymentType === PaymentType.REFUND ? 'Hoàn tiền' : 'Thu tiền'} đơn hàng ${order.code} [${dto.paymentMethod === PaymentMethod.CASH ? 'Tiền mặt' : 'Chuyển khoản'}]`,
+          description: `${isRefund ? 'Hoàn tiền' : 'Thu tiền'} đơn hàng ${order.code} [${dto.paymentMethod === PaymentMethod.CASH ? 'Tiền mặt' : 'Chuyển khoản'}]`,
         },
       });
 
       // Cập nhật lại số tiền đã thanh toán và còn lại trên đơn hàng
-      const newPaidAmount =
-        dto.paymentType === PaymentType.REFUND
-          ? Math.max(0, Number(order.paidAmount) - dto.amount)
-          : Number(order.paidAmount) + dto.amount;
+      const newPaidAmount = isRefund
+        ? Math.max(0, currentPaid - dto.amount)
+        : currentPaid + dto.amount;
 
-      const newRemaining = Math.max(0, Number(order.totalAmount) - newPaidAmount);
+      const newRemaining = Math.max(0, currentTotal - newPaidAmount);
 
       await tx.order.update({
         where: { id: order.id },
@@ -869,10 +963,18 @@ export class OrdersService {
         },
       });
 
+      // Cập nhật tổng chi tiêu của khách hàng
+      await tx.customer.update({
+        where: { id: order.customer_id },
+        data: {
+          totalSpent: isRefund ? { decrement: dto.amount } : { increment: dto.amount },
+        },
+      });
+
       await tx.auditLog.create({
         data: {
           userId,
-          action: 'ADD_PAYMENT',
+          action: isRefund ? 'REFUND_PAYMENT' : 'ADD_PAYMENT',
           entity: 'PAYMENT',
           entityId: payment.id,
           newValues: {
@@ -880,6 +982,8 @@ export class OrdersService {
             amount: dto.amount,
             paymentType: dto.paymentType,
             method: dto.paymentMethod,
+            newPaidAmount,
+            newRemaining,
           },
         },
       });
@@ -889,19 +993,26 @@ export class OrdersService {
 
     broadcastSyncEvent(WsEvent.FINANCE_UPDATED, {
       entity: 'FINANCE',
-      action: 'PAYMENT_RECORDED',
+      action: dto.paymentType === PaymentType.REFUND ? 'REFUND_RECORDED' : 'PAYMENT_RECORDED',
       timestamp: new Date().toISOString(),
-      data: { orderId: order.id, amount: dto.amount },
+      data: { orderId: orderId, amount: dto.amount },
     });
 
     broadcastSyncEvent(WsEvent.ORDER_STATUS_CHANGED, {
       entity: 'ORDER',
       action: 'PAYMENT_UPDATED',
       timestamp: new Date().toISOString(),
-      data: { orderId: order.id, code: order.code },
+      data: { orderId: orderId },
     });
 
-    return this.getOrderById(order.id);
+    broadcastSyncEvent(WsEvent.CUSTOMER_UPDATED, {
+      entity: 'CUSTOMER',
+      action: 'SPENT_UPDATED',
+      timestamp: new Date().toISOString(),
+      data: { orderId: orderId },
+    });
+
+    return this.getOrderById(orderId);
   }
 }
 

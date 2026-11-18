@@ -9,6 +9,7 @@ import {
 } from './finance.dto';
 import { broadcastSyncEvent, WsEvent } from '../../websocket/socket.server';
 import * as XLSX from 'xlsx';
+import { generateSafeCode } from '../../common/code-generator';
 
 export class FinanceService {
   // ==========================================
@@ -141,14 +142,7 @@ export class FinanceService {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const prefix = `SQ-${year}${month}`;
-
-    const count = await tx.financialTransaction.count({
-      where: {
-        code: { startsWith: prefix },
-      },
-    });
-
-    return `${prefix}-${String(count + 1).padStart(4, '0')}`;
+    return await generateSafeCode(tx, 'financialTransaction', prefix);
   }
 
   async createManualTransaction(dto: CreateFinancialTransactionDto, userId: string) {
@@ -517,7 +511,8 @@ export class FinanceService {
     const totalOtherIncome = otherInflows.reduce((sum: number, it: any) => sum + Number(it.amount), 0);
 
     // D. LỢI NHUẬN RÒNG (NET PROFIT)
-    const netProfit = grossProfit - totalOpex + totalOtherIncome;
+    // Lợi nhuận ròng = Lợi nhuận gộp hoa + Lãi/lỗ ròng vận chuyển (Thu hộ ship - Trả shipper) - Chi phí hoạt động khác + Thu nhập khác
+    const netProfit = grossProfit + shippingCollected - totalOpex + totalOtherIncome;
     const netProfitMargin = netRevenue > 0 ? (netProfit / netRevenue) * 100 : 0;
 
     // E. DỮ LIỆU BIỂU ĐỒ THEO CHU KỲ (TIMESERIES CHART DATA)
@@ -664,10 +659,14 @@ export class FinanceService {
       if (buckets[key]) {
         const netRev = Number(ord.subtotal) - Number(ord.discountAmount);
         const cogs = Number(ord.totalCogs);
+        const shipColl = Number(ord.shippingFeeCollected || 0);
+        const shipPaid = Number(ord.shippingCostPaid || 0);
+        const netShip = shipColl - shipPaid;
+
         buckets[key].revenue += netRev;
         buckets[key].cogs += cogs;
         buckets[key].grossProfit += netRev - cogs;
-        buckets[key].netProfit += netRev - cogs;
+        buckets[key].netProfit += (netRev - cogs) + netShip;
       }
     }
 

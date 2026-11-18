@@ -13,9 +13,9 @@ async function startDevDb() {
   const PORT = 5432;
   const pgServer = createServer(db);
 
-  pgServer.listen(PORT, () => {
+  pgServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🐘 [Dev Database] PostgreSQL server đang lắng nghe tại cổng TCP: ${PORT}`);
-    console.log(`🔗 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/first_bloom?schema=public"`);
+    console.log(`🔗 DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/first_bloom?schema=public"`);
   });
 }
 

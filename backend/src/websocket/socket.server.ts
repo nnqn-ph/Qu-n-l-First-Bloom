@@ -11,6 +11,7 @@ export enum WsEvent {
   ORDER_STATUS_CHANGED = 'ORDER_STATUS_CHANGED',
   PRODUCTION_STATUS_CHANGED = 'PRODUCTION_STATUS_CHANGED',
   FINANCE_UPDATED = 'FINANCE_UPDATED',
+  CUSTOMER_UPDATED = 'CUSTOMER_UPDATED',
   SESSION_REVOKED = 'SESSION_REVOKED',
 }
 
@@ -26,7 +27,10 @@ let io: SocketIOServer | null = null;
 export function initSocketServer(httpServer: HttpServer): SocketIOServer {
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: env.CORS_ORIGIN,
+      origin: (requestOrigin, callback) => {
+        // Cho phép tất cả thiết bị kết nối realtime (LAN, mobile, localhost, web host)
+        callback(null, true);
+      },
       credentials: true,
     },
   });

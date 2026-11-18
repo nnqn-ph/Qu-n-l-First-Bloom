@@ -11,6 +11,7 @@ import {
 } from './materials.dto';
 import { broadcastSyncEvent, WsEvent } from '../../websocket/socket.server';
 import { StockDocumentType, StockReferenceType, WarehouseType, CashFlowType, PaymentMethod } from '@prisma/client';
+import { generateSafeCode } from '../../common/code-generator';
 
 export class MaterialsService {
   // ==========================================
@@ -458,27 +459,10 @@ export class MaterialsService {
     // Tính tổng tiền toàn phiếu nhập
     const totalAmount = dto.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
-    // Sinh mã phiếu nhập theo định dạng PNK-YYYYMM-XXXX
     const now = new Date();
     const datePrefix = `PNK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const countThisMonth = await prisma.purchaseReceipt.count({
-      where: { code: { startsWith: datePrefix } },
-    });
-    const receiptCode = `${datePrefix}-${String(countThisMonth + 1).padStart(4, '0')}`;
-
-    // Sinh mã chứng từ sổ kho CTK-YYYYMM-XXXX
     const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCountThisMonth = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const stockDocCode = `${docPrefix}-${String(docCountThisMonth + 1).padStart(4, '0')}`;
-
-    // Sinh mã phiếu chi sổ quỹ PC-YYYYMM-XXXX
     const txPrefix = `PC-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const txCountThisMonth = await prisma.financialTransaction.count({
-      where: { code: { startsWith: txPrefix } },
-    });
-    const financeCode = `${txPrefix}-${String(txCountThisMonth + 1).padStart(4, '0')}`;
 
     // Lấy hoặc tạo danh mục chi mua NVL
     let expCategory = await prisma.expenseCategory.findUnique({ where: { code: 'EXP-MAT' } });
@@ -494,6 +478,10 @@ export class MaterialsService {
 
     // THỰC THI TRANSACTION NGHIỆP VỤ BẮT BUỘC
     const createdReceipt = await prisma.$transaction(async (tx) => {
+      const receiptCode = await generateSafeCode(tx, 'purchaseReceipt', datePrefix);
+      const stockDocCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
+      const financeCode = await generateSafeCode(tx, 'financialTransaction', txPrefix);
+
       // 1. Tạo phiếu nhập kho chính
       const receipt = await tx.purchaseReceipt.create({
         data: {
@@ -659,12 +647,9 @@ export class MaterialsService {
 
     const now = new Date();
     const docPrefix = `CTK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const docCount = await prisma.stockDocument.count({
-      where: { code: { startsWith: docPrefix } },
-    });
-    const docCode = `${docPrefix}-${String(docCount + 1).padStart(4, '0')}`;
 
     return prisma.$transaction(async (tx) => {
+      const docCode = await generateSafeCode(tx, 'stockDocument', docPrefix);
       // Row lock
       const currentRows = await tx.$queryRaw<Array<{ quantity: any; avg_cost: any; version: number }>>`
         SELECT quantity, avg_cost, version

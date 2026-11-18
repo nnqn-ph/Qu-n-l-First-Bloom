@@ -20,11 +20,15 @@ import {
   Menu, 
   X,
   Wifi,
+  WifiOff,
+  Loader2,
   Sparkles
 } from 'lucide-react';
+import { useSocketSync } from '../../services/useSocketSync';
 
 export const MainLayout: React.FC = () => {
   const { user, logout } = useAuth();
+  const { status: socketStatus } = useSocketSync();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sessionsModalOpen, setSessionsModalOpen] = useState(false);
 
@@ -138,11 +142,26 @@ export const MainLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <Wifi className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Socket.IO: Đồng bộ</span>
-            </div>
+            {socketStatus === 'connected' && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Wifi className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Socket.IO: Đã đồng bộ</span>
+              </div>
+            )}
+            {socketStatus === 'connecting' && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                <span className="hidden sm:inline">Socket.IO: Đang kết nối...</span>
+              </div>
+            )}
+            {socketStatus === 'disconnected' && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <WifiOff className="w-3.5 h-3.5 text-rose-600" />
+                <span className="hidden sm:inline">Socket.IO: Mất kết nối</span>
+              </div>
+            )}
 
             <button
               onClick={() => setSessionsModalOpen(true)}
