@@ -8,10 +8,11 @@ import { ProductType, RecipeItemType } from '@prisma/client';
 export const createProductCategorySchema = z.object({
   code: z
     .string()
-    .min(2, 'Mã danh mục tối thiểu 2 ký tự')
-    .max(30, 'Mã danh mục tối đa 30 ký tự')
-    .regex(/^[A-Za-z0-9_-]+$/, 'Mã danh mục chỉ chứa chữ cái, số, gạch ngang và gạch dưới'),
-  name: z.string().min(2, 'Tên danh mục tối thiểu 2 ký tự').max(100, 'Tên danh mục tối đa 100 ký tự'),
+    .max(50, 'Mã danh mục tối đa 50 ký tự')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  name: z.string().min(1, 'Tên danh mục không được để trống').max(100, 'Tên danh mục tối đa 100 ký tự'),
 });
 
 export const updateProductCategorySchema = createProductCategorySchema.partial();
@@ -24,19 +25,39 @@ export type UpdateProductCategoryDto = z.infer<typeof updateProductCategorySchem
 // ==========================================
 
 export const createProductSchema = z.object({
-  categoryId: z.string().uuid('Danh mục sản phẩm không hợp lệ'),
+  categoryId: z
+    .string()
+    .uuid('Danh mục sản phẩm không hợp lệ')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
   sku: z
     .string()
-    .min(2, 'Mã SKU tối thiểu 2 ký tự')
     .max(50, 'Mã SKU tối đa 50 ký tự')
-    .regex(/^[A-Za-z0-9_-]+$/, 'Mã SKU chỉ chứa chữ cái, số, gạch ngang và gạch dưới'),
-  name: z.string().min(2, 'Tên sản phẩm tối thiểu 2 ký tự').max(200, 'Tên sản phẩm tối đa 200 ký tự'),
-  imageUrl: z.string().url('Đường dẫn ảnh không hợp lệ').optional().or(z.literal('')),
-  type: z.nativeEnum(ProductType, {
-    errorMap: () => ({ message: 'Loại sản phẩm phải là FINISHED hoặc INTERMEDIATE' }),
-  }),
-  sellingPrice: z.number().min(0, 'Giá bán không được âm'),
-  description: z.string().max(1000, 'Mô tả tối đa 1000 ký tự').optional(),
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  name: z.string().min(1, 'Tên sản phẩm không được để trống').max(200, 'Tên sản phẩm tối đa 200 ký tự'),
+  imageUrl: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  type: z
+    .nativeEnum(ProductType, {
+      errorMap: () => ({ message: 'Loại sản phẩm phải là FINISHED hoặc INTERMEDIATE' }),
+    })
+    .optional()
+    .default(ProductType.FINISHED),
+  sellingPrice: z.coerce.number().min(0, 'Giá bán không được âm'),
+  description: z
+    .string()
+    .max(1000, 'Mô tả tối đa 1000 ký tự')
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
   isActive: z.boolean().optional().default(true),
 });
 

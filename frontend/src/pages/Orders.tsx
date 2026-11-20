@@ -223,7 +223,8 @@ export function OrdersPage() {
 
   // Helpers
   const resetCreateForm = () => {
-    setIsNewCustomer(false);
+    const hasCustomers = customers.length > 0;
+    setIsNewCustomer(!hasCustomers);
     setNewCustomer({ fullName: '', phone: '', address: '' });
     setCreateForm({
       customerId: customers[0]?.id || '',
@@ -251,6 +252,8 @@ export function OrdersPage() {
     resetCreateForm();
     if (customers.length > 0) {
       setCreateForm((prev) => ({ ...prev, customerId: customers[0].id }));
+    } else {
+      setIsNewCustomer(true);
     }
     if (products.length > 0) {
       setCreateForm((prev) => ({
@@ -370,6 +373,7 @@ export function OrdersPage() {
     };
 
     if (isNewCustomer) {
+      payload.customerId = undefined;
       payload.customer = {
         fullName: newCustomer.fullName.trim(),
         phone: newCustomer.phone.trim(),
@@ -377,6 +381,7 @@ export function OrdersPage() {
       };
     } else {
       payload.customerId = createForm.customerId;
+      payload.customer = undefined;
     }
 
     createOrderMutation.mutate(payload);
@@ -671,13 +676,31 @@ export function OrdersPage() {
                   <label className="text-xs font-semibold uppercase text-forest-700">
                     Thông tin khách hàng <span className="text-rose-500">*</span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setIsNewCustomer(!isNewCustomer)}
-                    className="text-xs font-semibold text-sage-700 hover:text-sage-900 underline"
-                  >
-                    {isNewCustomer ? 'Chọn khách hàng có sẵn' : '+ Thêm khách hàng mới'}
-                  </button>
+                  <div className="inline-flex p-0.5 bg-sage-200/60 rounded-xl text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setIsNewCustomer(false)}
+                      disabled={customers.length === 0}
+                      className={`px-3 py-1 rounded-lg font-medium transition ${
+                        !isNewCustomer
+                          ? 'bg-white text-forest-900 shadow-sm'
+                          : 'text-forest-600 hover:text-forest-900 disabled:opacity-50'
+                      }`}
+                    >
+                      Khách hàng có sẵn ({customers.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsNewCustomer(true)}
+                      className={`px-3 py-1 rounded-lg font-medium transition ${
+                        isNewCustomer
+                          ? 'bg-white text-forest-900 shadow-sm'
+                          : 'text-forest-600 hover:text-forest-900'
+                      }`}
+                    >
+                      + Khách hàng mới
+                    </button>
+                  </div>
                 </div>
 
                 {isNewCustomer ? (
@@ -718,7 +741,7 @@ export function OrdersPage() {
                     </option>
                     {customers.map((c) => (
                       <option key={c.id} value={c.id}>
-                        [{c.code}] {c.fullName} - {c.phone}
+                        {c.fullName} - {c.phone}
                       </option>
                     ))}
                   </select>
@@ -758,7 +781,7 @@ export function OrdersPage() {
                           >
                             {products.map((p) => (
                               <option key={p.id} value={p.id}>
-                                [{p.sku}] {p.name} - Giá: {formatCurrency(p.sellingPrice)} (Còn:{' '}
+                                {p.name} - Giá: {formatCurrency(p.sellingPrice)} (Còn:{' '}
                                 {p.inventory?.availableQuantity || 0})
                               </option>
                             ))}

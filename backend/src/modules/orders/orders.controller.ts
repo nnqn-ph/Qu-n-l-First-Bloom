@@ -1,5 +1,13 @@
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { ordersService } from './orders.service';
+
+function getErrorMessage(error: any): string {
+  if (error instanceof ZodError) {
+    return error.errors.map((e) => e.message).join(', ');
+  }
+  return error?.message || 'Đã có lỗi xảy ra';
+}
 import {
   createCustomerSchema,
   updateCustomerSchema,
@@ -40,7 +48,7 @@ export class OrdersController {
       const customer = await ordersService.createCustomer(parsed, req.user!.id);
       return sendSuccess(res, customer, 'Tạo khách hàng thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -50,7 +58,7 @@ export class OrdersController {
       const customer = await ordersService.updateCustomer(req.params.id, parsed, req.user!.id);
       return sendSuccess(res, customer, 'Cập nhật thông tin khách hàng thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -65,7 +73,7 @@ export class OrdersController {
       const orders = await ordersService.getOrders(parsedFilters, isStaff);
       return sendSuccess(res, orders, 'Lấy danh sách đơn hàng thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -75,7 +83,7 @@ export class OrdersController {
       const order = await ordersService.getOrderById(req.params.id, isStaff);
       return sendSuccess(res, order, 'Lấy chi tiết đơn hàng thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 404);
+      return sendError(res, getErrorMessage(error), 404);
     }
   }
 
@@ -85,7 +93,7 @@ export class OrdersController {
       const order = await ordersService.createOrder(parsed, req.user!.id);
       return sendSuccess(res, order, 'Tạo đơn hàng thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -99,7 +107,7 @@ export class OrdersController {
       );
       return sendSuccess(res, order, 'Cập nhật trạng thái đơn hàng thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -109,7 +117,7 @@ export class OrdersController {
       const order = await ordersService.addPayment(req.params.id, parsed, req.user!.id);
       return sendSuccess(res, order, 'Ghi nhận thanh toán / tiền cọc thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 }

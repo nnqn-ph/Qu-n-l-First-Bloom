@@ -11,6 +11,7 @@ import {
 } from './products.dto';
 import { RecipeItemType } from '@prisma/client';
 import { broadcastSyncEvent, WsEvent } from '../../websocket/socket.server';
+import { generateSafeCode } from '../../common/code-generator';
 
 export class ProductsService {
   // ==========================================
@@ -34,21 +35,29 @@ export class ProductsService {
   }
 
   async createProductCategory(dto: CreateProductCategoryDto, userId: string) {
-    const existing = await prisma.productCategory.findFirst({
-      where: {
-        code: dto.code.toUpperCase(),
-        deletedAt: null,
-      },
-    });
+    let code = dto.code?.trim();
+    if (!code) {
+      const now = new Date();
+      const prefix = `DM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      code = await generateSafeCode(prisma, 'productCategory', prefix);
+    } else {
+      code = code.toUpperCase();
+      const existing = await prisma.productCategory.findFirst({
+        where: {
+          code,
+          deletedAt: null,
+        },
+      });
 
-    if (existing) {
-      throw new Error(`Mã danh mục '${dto.code}' đã tồn tại trong hệ thống`);
+      if (existing) {
+        throw new Error(`Mã danh mục '${code}' đã tồn tại trong hệ thống`);
+      }
     }
 
     const category = await prisma.productCategory.create({
       data: {
-        code: dto.code.toUpperCase(),
-        name: dto.name,
+        code,
+        name: dto.name.trim(),
       },
     });
 
@@ -398,35 +407,63 @@ export class ProductsService {
   }
 
   async createProduct(dto: CreateProductDto, userId: string) {
-    const existingSku = await prisma.product.findFirst({
-      where: {
-        sku: dto.sku.toUpperCase(),
-        deletedAt: null,
-      },
-    });
+    // 1. Tự động sinh mã SKU nếu không truyền hoặc để trống
+    let sku = dto.sku?.trim();
+    if (!sku) {
+      const now = new Date();
+      const prefix = `SP-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      sku = await generateSafeCode(prisma, 'product', prefix);
+    } else {
+      sku = sku.toUpperCase();
+      const existingSku = await prisma.product.findFirst({
+        where: {
+          sku,
+          deletedAt: null,
+        },
+      });
 
-    if (existingSku) {
-      throw new Error(`Mã SKU '${dto.sku}' đã tồn tại trong danh mục sản phẩm`);
+      if (existingSku) {
+        throw new Error(`Mã sản phẩm '${dto.sku}' đã tồn tại trong danh mục`);
+      }
     }
 
-    const category = await prisma.productCategory.findUnique({
-      where: { id: dto.categoryId },
-    });
+    // 2. Tự động gán danh mục nếu chưa truyền hoặc danh sách rỗng
+    let categoryId = dto.categoryId?.trim();
+    if (!categoryId) {
+      const firstCat = await prisma.productCategory.findFirst({
+        where: { deletedAt: null },
+      });
+      if (firstCat) {
+        categoryId = firstCat.id;
+      } else {
+        const defaultCat = await prisma.productCategory.create({
+          data: {
+            code: 'DM-HOA',
+            name: 'Hoa thành phẩm',
+          },
+        });
+        categoryId = defaultCat.id;
+      }
+    } else {
+      const category = await prisma.productCategory.findUnique({
+        where: { id: categoryId },
+      });
 
-    if (!category || category.deletedAt !== null) {
-      throw new Error('Danh mục sản phẩm không tồn tại');
+      if (!category || category.deletedAt !== null) {
+        throw new Error('Danh mục sản phẩm không tồn tại');
+      }
     }
 
     const result = await prisma.$transaction(async (tx: any) => {
       const product = await tx.product.create({
         data: {
-          categoryId: dto.categoryId,
-          sku: dto.sku.toUpperCase(),
-          name: dto.name,
-          imageUrl: dto.imageUrl || null,
-          type: dto.type,
+          categoryId,
+          sku,
+          name: dto.name.trim(),
+          imageUrl: dto.imageUrl?.trim() || null,
+          type: dto.type || 'FINISHED',
           sellingPrice: dto.sellingPrice,
-          description: dto.description || null,
+          description: dto.description?.trim() || null,
           isActive: dto.isActive !== undefined ? dto.isActive : true,
         },
         include: { category: true },

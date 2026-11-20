@@ -85,7 +85,6 @@ export function ProductsPage() {
   });
 
   // Category Form state
-  const [newCatCode, setNewCatCode] = useState('');
   const [newCatName, setNewCatName] = useState('');
 
   // ==========================================
@@ -157,12 +156,11 @@ export function ProductsPage() {
   });
 
   const createCategoryMutation = useMutation({
-    mutationFn: async (payload: { code: string; name: string }) => {
+    mutationFn: async (payload: { code?: string; name: string }) => {
       return api.post('/product-categories', payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product-categories'] });
-      setNewCatCode('');
       setNewCatName('');
     },
     onError: (err: any) => {
@@ -226,23 +224,24 @@ export function ProductsPage() {
     e.preventDefault();
     setFormError(null);
 
-    if (!productForm.categoryId) {
-      setFormError('Vui lòng chọn danh mục');
-      return;
-    }
-    if (!productForm.sku.trim()) {
-      setFormError('Vui lòng nhập mã SKU sản phẩm');
-      return;
-    }
     if (!productForm.name.trim()) {
       setFormError('Vui lòng nhập tên sản phẩm');
       return;
     }
 
+    const payload: any = {
+      ...productForm,
+      name: productForm.name.trim(),
+      sku: productForm.sku.trim() || undefined,
+      description: productForm.description.trim() || undefined,
+      imageUrl: productForm.imageUrl.trim() || undefined,
+      categoryId: productForm.categoryId || undefined,
+    };
+
     if (editingProduct) {
-      updateProductMutation.mutate({ id: editingProduct.id, payload: productForm });
+      updateProductMutation.mutate({ id: editingProduct.id, payload });
     } else {
-      createProductMutation.mutate(productForm);
+      createProductMutation.mutate(payload);
     }
   };
 
@@ -617,16 +616,15 @@ export function ProductsPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-forest-700 mb-1">
-                    Danh mục sản phẩm <span className="text-rose-500">*</span>
+                    Danh mục sản phẩm
                   </label>
                   <select
                     value={productForm.categoryId}
                     onChange={(e) => setProductForm({ ...productForm, categoryId: e.target.value })}
                     className="w-full px-3 py-2 bg-cream-50 border border-sage-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-500 text-forest-800"
-                    required
                   >
-                    <option value="" disabled>
-                      Chọn danh mục
+                    <option value="">
+                      {categories.length > 0 ? '-- Chọn danh mục (hoặc để mặc định) --' : '-- Mặc định (Hoa thành phẩm) --'}
                     </option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -656,38 +654,37 @@ export function ProductsPage() {
                 </div>
               </div>
 
-              {/* SKU & Name */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Product Name */}
+              <div>
+                <label className="block text-xs font-semibold text-forest-700 mb-1">
+                  Tên sản phẩm <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="VD: Bó hoa Tulip 5 bông kem đỏ"
+                  value={productForm.name}
+                  onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+                  className="w-full px-3 py-2 bg-cream-50 border border-sage-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-500 text-forest-800 font-medium"
+                  required
+                />
+              </div>
+
+              {/* Optional SKU if editing */}
+              {editingProduct && (
                 <div>
                   <label className="block text-xs font-semibold text-forest-700 mb-1">
-                    Mã SKU <span className="text-rose-500">*</span>
+                    Mã sản phẩm (SKU)
                   </label>
                   <input
                     type="text"
-                    placeholder="VD: SP-BO-TULIP-05"
                     value={productForm.sku}
                     onChange={(e) =>
                       setProductForm({ ...productForm, sku: e.target.value.toUpperCase() })
                     }
-                    className="w-full px-3 py-2 bg-cream-50 border border-sage-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sage-500 text-forest-800"
-                    required
+                    className="w-full px-3 py-2 bg-cream-50 border border-sage-300 rounded-xl text-sm font-mono text-forest-600"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-forest-700 mb-1">
-                    Tên sản phẩm <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="VD: Bó hoa Tulip 5 bông kem đỏ"
-                    value={productForm.name}
-                    onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-cream-50 border border-sage-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-500 text-forest-800"
-                    required
-                  />
-                </div>
-              </div>
+              )}
 
               {/* Selling Price & Image URL */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -803,36 +800,29 @@ export function ProductsPage() {
                 <div className="text-xs font-semibold uppercase text-forest-700">
                   Thêm danh mục mới
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="flex gap-2">
                   <input
                     type="text"
-                    placeholder="Mã (VD: CAT-GIO-HOA)"
-                    value={newCatCode}
-                    onChange={(e) => setNewCatCode(e.target.value.toUpperCase())}
-                    className="px-3 py-2 bg-white border border-sage-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sage-500"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Tên danh mục"
+                    placeholder="Nhập tên danh mục (VD: Giỏ hoa, Hoa cưới, Bó hoa...)"
                     value={newCatName}
                     onChange={(e) => setNewCatName(e.target.value)}
-                    className="px-3 py-2 bg-white border border-sage-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-500"
+                    className="flex-1 px-3 py-2 bg-white border border-sage-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newCatName.trim()) {
+                        alert('Vui lòng nhập tên danh mục');
+                        return;
+                      }
+                      createCategoryMutation.mutate({ name: newCatName.trim() });
+                    }}
+                    disabled={createCategoryMutation.isPending}
+                    className="px-4 py-2 bg-sage-600 hover:bg-sage-700 text-white rounded-xl text-sm font-medium transition shadow-sm whitespace-nowrap"
+                  >
+                    {createCategoryMutation.isPending ? 'Đang thêm...' : '+ Thêm danh mục'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!newCatCode.trim() || !newCatName.trim()) {
-                      alert('Vui lòng nhập đầy đủ mã và tên danh mục');
-                      return;
-                    }
-                    createCategoryMutation.mutate({ code: newCatCode.trim(), name: newCatName.trim() });
-                  }}
-                  disabled={createCategoryMutation.isPending}
-                  className="w-full py-2 bg-sage-600 hover:bg-sage-700 text-white rounded-xl text-sm font-medium transition shadow-sm"
-                >
-                  {createCategoryMutation.isPending ? 'Đang thêm...' : '+ Thêm danh mục'}
-                </button>
               </div>
 
               {/* Category list */}

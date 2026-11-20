@@ -1,5 +1,13 @@
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { productsService } from './products.service';
+
+function getErrorMessage(error: any): string {
+  if (error instanceof ZodError) {
+    return error.errors.map((e) => e.message).join(', ');
+  }
+  return error?.message || 'Đã có lỗi xảy ra';
+}
 import {
   createProductCategorySchema,
   updateProductCategorySchema,
@@ -31,7 +39,7 @@ export class ProductsController {
       const category = await productsService.createProductCategory(parsed, req.user!.id);
       return sendSuccess(res, category, 'Tạo danh mục sản phẩm thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -41,7 +49,7 @@ export class ProductsController {
       const category = await productsService.updateProductCategory(req.params.id, parsed, req.user!.id);
       return sendSuccess(res, category, 'Cập nhật danh mục sản phẩm thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -50,7 +58,7 @@ export class ProductsController {
       await productsService.deleteProductCategory(req.params.id, req.user!.id);
       return sendSuccess(res, null, 'Đã xóa danh mục sản phẩm');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -65,7 +73,7 @@ export class ProductsController {
       const products = await productsService.getProducts(parsedFilters, isStaff);
       return sendSuccess(res, products, 'Lấy danh sách sản phẩm thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -75,7 +83,7 @@ export class ProductsController {
       const product = await productsService.getProductById(req.params.id, isStaff);
       return sendSuccess(res, product, 'Lấy chi tiết sản phẩm thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 404);
+      return sendError(res, getErrorMessage(error), 404);
     }
   }
 
@@ -85,7 +93,7 @@ export class ProductsController {
       const product = await productsService.createProduct(parsed, req.user!.id);
       return sendSuccess(res, product, 'Tạo sản phẩm thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -95,7 +103,7 @@ export class ProductsController {
       const product = await productsService.updateProduct(req.params.id, parsed, req.user!.id);
       return sendSuccess(res, product, 'Cập nhật sản phẩm thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 

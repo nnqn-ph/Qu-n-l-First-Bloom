@@ -119,12 +119,10 @@ export const MaterialsPage: React.FC = () => {
   const [matError, setMatError] = useState<string | null>(null);
 
   // Form states - Category
-  const [catCode, setCatCode] = useState('');
   const [catName, setCatName] = useState('');
   const [catError, setCatError] = useState<string | null>(null);
 
   // Form states - Supplier
-  const [supCode, setSupCode] = useState('');
   const [supName, setSupName] = useState('');
   const [supPhone, setSupPhone] = useState('');
   const [supAddress, setSupAddress] = useState('');
@@ -229,24 +227,25 @@ export const MaterialsPage: React.FC = () => {
     mutationFn: async () => {
       if (editingMaterial) {
         const res = await api.put(`/v1/materials/${editingMaterial.id}`, {
-          name: matName,
-          categoryId: matCategoryId,
-          unit: matUnit,
+          name: matName.trim(),
+          categoryId: matCategoryId || undefined,
+          unit: matUnit.trim(),
           defaultPrice: Number(matDefaultPrice),
           minStockAlert: Number(matMinStockAlert),
-          notes: matNotes,
+          notes: matNotes?.trim() || undefined,
         });
         return res.data;
       } else {
-        const res = await api.post('/v1/materials', {
-          sku: matSku,
-          name: matName,
-          categoryId: matCategoryId,
-          unit: matUnit,
+        const payload: any = {
+          name: matName.trim(),
+          unit: matUnit.trim(),
           defaultPrice: Number(matDefaultPrice),
           minStockAlert: Number(matMinStockAlert),
-          notes: matNotes,
-        });
+        };
+        if (matSku.trim()) payload.sku = matSku.trim();
+        if (matCategoryId) payload.categoryId = matCategoryId;
+        if (matNotes.trim()) payload.notes = matNotes.trim();
+        const res = await api.post('/v1/materials', payload);
         return res.data;
       }
     },
@@ -277,12 +276,11 @@ export const MaterialsPage: React.FC = () => {
   // Category Create
   const createCategoryMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post('/v1/material-categories', { code: catCode, name: catName });
+      const res = await api.post('/v1/material-categories', { name: catName.trim() });
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['material-categories'] });
-      setCatCode('');
       setCatName('');
       setCatError(null);
     },
@@ -294,19 +292,18 @@ export const MaterialsPage: React.FC = () => {
   // Supplier Create
   const createSupplierMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post('/v1/suppliers', {
-        code: supCode,
-        name: supName,
-        phone: supPhone,
-        address: supAddress,
-        notes: supNotes,
-      });
+      const payload: any = {
+        name: supName.trim(),
+      };
+      if (supPhone.trim()) payload.phone = supPhone.trim();
+      if (supAddress.trim()) payload.address = supAddress.trim();
+      if (supNotes.trim()) payload.notes = supNotes.trim();
+      const res = await api.post('/v1/suppliers', payload);
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
       setSupplierModalOpen(false);
-      setSupCode('');
       setSupName('');
       setSupPhone('');
       setSupAddress('');
@@ -1046,42 +1043,6 @@ export const MaterialsPage: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-forest-800 mb-1">
-                    Mã SKU <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    disabled={!!editingMaterial}
-                    value={matSku}
-                    onChange={(e) => setMatSku(e.target.value.toUpperCase())}
-                    placeholder="VD: NVL-KN-TIM"
-                    className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500 font-mono disabled:opacity-60"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-forest-800 mb-1">
-                    Danh mục <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    required
-                    value={matCategoryId}
-                    onChange={(e) => setMatCategoryId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500"
-                  >
-                    <option value="">-- Chọn nhóm danh mục --</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-forest-800 mb-1">
                   Tên nguyên vật liệu <span className="text-rose-500">*</span>
@@ -1095,6 +1056,57 @@ export const MaterialsPage: React.FC = () => {
                   className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500"
                 />
               </div>
+
+              {editingMaterial ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-forest-800 mb-1">
+                      Mã SKU
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={matSku}
+                      className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 font-mono opacity-70 cursor-not-allowed"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-forest-800 mb-1">
+                      Danh mục
+                    </label>
+                    <select
+                      value={matCategoryId}
+                      onChange={(e) => setMatCategoryId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500"
+                    >
+                      <option value="">-- Chọn nhóm danh mục --</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-forest-800 mb-1">
+                    Nhóm danh mục
+                  </label>
+                  <select
+                    value={matCategoryId}
+                    onChange={(e) => setMatCategoryId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500"
+                  >
+                    <option value="">-- Mặc định (hoặc chọn nhóm danh mục) --</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -1579,30 +1591,22 @@ export const MaterialsPage: React.FC = () => {
                 className="space-y-3 p-3 bg-cream-50/70 rounded-2xl border border-sage-200"
               >
                 <div className="text-xs font-semibold text-forest-800">Thêm danh mục mới:</div>
-                <div className="grid grid-cols-3 gap-2">
+                <div>
                   <input
                     type="text"
                     required
-                    placeholder="MÃ (VD: CAT-RUYBANG)"
-                    value={catCode}
-                    onChange={(e) => setCatCode(e.target.value.toUpperCase())}
-                    className="px-2.5 py-1.5 text-xs bg-white border border-sage-200 rounded-lg font-mono"
-                  />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Tên danh mục"
+                    placeholder="Nhập tên nhóm danh mục (VD: Ruy băng, Giấy gói...)"
                     value={catName}
                     onChange={(e) => setCatName(e.target.value)}
-                    className="col-span-2 px-2.5 py-1.5 text-xs bg-white border border-sage-200 rounded-lg"
+                    className="w-full px-3 py-2 text-xs bg-white border border-sage-200 rounded-xl text-forest-900 focus:outline-none focus:ring-2 focus:ring-sage-500"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={createCategoryMutation.isPending}
-                  className="w-full py-1.5 rounded-lg text-xs font-semibold bg-sage-600 text-white hover:bg-sage-700"
+                  className="w-full py-2 rounded-xl text-xs font-semibold bg-sage-600 text-white hover:bg-sage-700 shadow-sm"
                 >
-                  {createCategoryMutation.isPending ? 'Đang tạo...' : '+ Thêm nhóm'}
+                  {createCategoryMutation.isPending ? 'Đang tạo...' : '+ Thêm nhóm danh mục'}
                 </button>
               </form>
 
@@ -1660,20 +1664,6 @@ export const MaterialsPage: React.FC = () => {
                   {supError}
                 </div>
               )}
-
-              <div>
-                <label className="block text-xs font-semibold text-forest-800 mb-1">
-                  Mã nhà cung cấp <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="VD: NCC-HAIPHONG"
-                  value={supCode}
-                  onChange={(e) => setSupCode(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 text-xs bg-cream-50/50 border border-sage-200 rounded-xl font-mono"
-                />
-              </div>
 
               <div>
                 <label className="block text-xs font-semibold text-forest-800 mb-1">

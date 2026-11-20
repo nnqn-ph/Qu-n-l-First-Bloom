@@ -1,5 +1,13 @@
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { materialsService } from './materials.service';
+
+function getErrorMessage(error: any): string {
+  if (error instanceof ZodError) {
+    return error.errors.map((e) => e.message).join(', ');
+  }
+  return error?.message || 'Đã có lỗi xảy ra';
+}
 import { 
   createCategorySchema, 
   updateCategorySchema, 
@@ -29,7 +37,7 @@ export class MaterialsController {
       const category = await materialsService.createCategory(validated);
       return sendSuccess(res, category, 'Tạo danh mục thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -40,7 +48,7 @@ export class MaterialsController {
       const updated = await materialsService.updateCategory(id, validated);
       return sendSuccess(res, updated, 'Cập nhật danh mục thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -50,7 +58,7 @@ export class MaterialsController {
       const deleted = await materialsService.deleteCategory(id);
       return sendSuccess(res, deleted, 'Xóa danh mục thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -65,7 +73,7 @@ export class MaterialsController {
       });
       return sendSuccess(res, materials, 'Lấy danh sách nguyên vật liệu thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 500);
+      return sendError(res, getErrorMessage(error), 500);
     }
   }
 
@@ -75,7 +83,7 @@ export class MaterialsController {
       const material = await materialsService.getMaterialById(id);
       return sendSuccess(res, material, 'Lấy chi tiết nguyên vật liệu thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 404);
+      return sendError(res, getErrorMessage(error), 404);
     }
   }
 
@@ -86,7 +94,7 @@ export class MaterialsController {
       const material = await materialsService.createMaterial(validated, userId);
       return sendSuccess(res, material, 'Tạo nguyên vật liệu thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -98,7 +106,7 @@ export class MaterialsController {
       const updated = await materialsService.updateMaterial(id, validated, userId);
       return sendSuccess(res, updated, 'Cập nhật nguyên vật liệu thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -109,7 +117,7 @@ export class MaterialsController {
       const deleted = await materialsService.deleteMaterial(id, userId);
       return sendSuccess(res, deleted, 'Xóa nguyên vật liệu thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 
@@ -119,7 +127,7 @@ export class MaterialsController {
       const suppliers = await materialsService.getSuppliers();
       return sendSuccess(res, suppliers, 'Lấy danh sách nhà cung cấp thành công');
     } catch (error: any) {
-      return sendError(res, error.message, 500);
+      return sendError(res, getErrorMessage(error), 500);
     }
   }
 
@@ -129,7 +137,7 @@ export class MaterialsController {
       const supplier = await materialsService.createSupplier(validated);
       return sendSuccess(res, supplier, 'Tạo nhà cung cấp thành công', 201);
     } catch (error: any) {
-      return sendError(res, error.message, 400);
+      return sendError(res, getErrorMessage(error), 400);
     }
   }
 

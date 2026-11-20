@@ -2,49 +2,109 @@ import { z } from 'zod';
 
 // 1. Danh mục nguyên vật liệu
 export const createCategorySchema = z.object({
-  code: z.string().min(2, 'Mã danh mục phải có ít nhất 2 ký tự').toUpperCase(),
-  name: z.string().min(2, 'Tên danh mục phải có ít nhất 2 ký tự'),
+  code: z
+    .string()
+    .max(50, 'Mã danh mục tối đa 50 ký tự')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim().toUpperCase())),
+  name: z.string().min(1, 'Tên danh mục không được để trống'),
 });
 
 export const updateCategorySchema = z.object({
-  name: z.string().min(2, 'Tên danh mục phải có ít nhất 2 ký tự'),
+  name: z.string().min(1, 'Tên danh mục không được để trống'),
 });
 
 // 2. Nguyên vật liệu
 export const createMaterialSchema = z.object({
-  sku: z.string().min(2, 'Mã nguyên vật liệu (SKU) phải có ít nhất 2 ký tự').toUpperCase(),
-  name: z.string().min(2, 'Tên nguyên vật liệu phải có ít nhất 2 ký tự'),
-  categoryId: z.string().uuid('Danh mục không hợp lệ'),
+  sku: z
+    .string()
+    .max(50, 'Mã SKU tối đa 50 ký tự')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim().toUpperCase())),
+  name: z.string().min(1, 'Tên nguyên vật liệu không được để trống'),
+  categoryId: z
+    .string()
+    .uuid('Danh mục không hợp lệ')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
   unit: z.string().min(1, 'Đơn vị tính không được để trống'),
-  defaultPrice: z.number().min(0, 'Giá mặc định không được âm').default(0),
-  minStockAlert: z.number().min(0, 'Mức tồn kho tối thiểu không được âm').default(0),
-  notes: z.string().optional(),
+  defaultPrice: z.coerce.number().min(0, 'Giá mặc định không được âm').default(0),
+  minStockAlert: z.coerce.number().min(0, 'Mức tồn kho tối thiểu không được âm').default(0),
+  notes: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
 });
 
 export const updateMaterialSchema = z.object({
-  name: z.string().min(2, 'Tên nguyên vật liệu phải có ít nhất 2 ký tự').optional(),
+  name: z.string().min(1, 'Tên nguyên vật liệu không được để trống').optional(),
   categoryId: z.string().uuid('Danh mục không hợp lệ').optional(),
   unit: z.string().min(1, 'Đơn vị tính không được để trống').optional(),
-  defaultPrice: z.number().min(0, 'Giá mặc định không được âm').optional(),
-  minStockAlert: z.number().min(0, 'Mức tồn kho tối thiểu không được âm').optional(),
+  defaultPrice: z.coerce.number().min(0, 'Giá mặc định không được âm').optional(),
+  minStockAlert: z.coerce.number().min(0, 'Mức tồn kho tối thiểu không được âm').optional(),
   isActive: z.boolean().optional(),
-  notes: z.string().optional(),
+  notes: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
 });
 
 // 3. Nhà cung cấp
 export const createSupplierSchema = z.object({
-  code: z.string().min(2, 'Mã nhà cung cấp phải có ít nhất 2 ký tự').toUpperCase(),
-  name: z.string().min(2, 'Tên nhà cung cấp phải có ít nhất 2 ký tự'),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  notes: z.string().optional(),
+  code: z
+    .string()
+    .max(50, 'Mã nhà cung cấp tối đa 50 ký tự')
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim().toUpperCase())),
+  name: z.string().min(1, 'Tên nhà cung cấp không được để trống'),
+  phone: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  address: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  notes: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
 });
 
 export const updateSupplierSchema = z.object({
-  name: z.string().min(2, 'Tên nhà cung cấp phải có ít nhất 2 ký tự').optional(),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  notes: z.string().optional(),
+  name: z.string().min(1, 'Tên nhà cung cấp không được để trống').optional(),
+  phone: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  address: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
+  notes: z
+    .string()
+    .optional()
+    .nullable()
+    .or(z.literal(''))
+    .transform((v) => (!v || v.trim() === '' ? undefined : v.trim())),
 });
 
 // 4. Phiếu nhập kho (Purchase Receipt)

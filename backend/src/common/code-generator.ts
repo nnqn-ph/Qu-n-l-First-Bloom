@@ -9,26 +9,41 @@ import { Prisma } from '@prisma/client';
  */
 export async function generateSafeCode(
   tx: any,
-  modelName: 'order' | 'customer' | 'payment' | 'financialTransaction' | 'productionOrder' | 'stockDocument' | 'purchaseReceipt',
+  modelName:
+    | 'order'
+    | 'customer'
+    | 'payment'
+    | 'financialTransaction'
+    | 'productionOrder'
+    | 'stockDocument'
+    | 'purchaseReceipt'
+    | 'product'
+    | 'material'
+    | 'productCategory'
+    | 'materialCategory'
+    | 'supplier',
   prefix: string,
   padLength: number = 4
 ): Promise<string> {
-  // Tìm bản ghi có mã lớn nhất trong tháng bắt đầu bằng prefix
+  const codeField = modelName === 'product' || modelName === 'material' ? 'sku' : 'code';
+
+  // Tìm bản ghi có mã/SKU lớn nhất bắt đầu bằng prefix
   const lastRecord = await tx[modelName].findFirst({
     where: {
-      code: { startsWith: prefix },
+      [codeField]: { startsWith: prefix },
     },
     orderBy: {
-      code: 'desc',
+      [codeField]: 'desc',
     },
     select: {
-      code: true,
+      [codeField]: true,
     },
   });
 
   let nextSeq = 1;
-  if (lastRecord?.code) {
-    const parts = lastRecord.code.split('-');
+  const currentCode = lastRecord ? (lastRecord as any)[codeField] : null;
+  if (currentCode) {
+    const parts = currentCode.split('-');
     const lastNumStr = parts[parts.length - 1];
     const parsed = parseInt(lastNumStr, 10);
     if (!isNaN(parsed) && parsed >= 1) {
@@ -39,7 +54,7 @@ export async function generateSafeCode(
   // Vòng lặp kiểm tra tránh trùng tuyệt đối (nếu đã có mã này thì tự tăng)
   let candidate = `${prefix}-${String(nextSeq).padStart(padLength, '0')}`;
   let exists = await tx[modelName].findUnique({
-    where: { code: candidate },
+    where: { [codeField]: candidate },
     select: { id: true },
   });
 
@@ -48,7 +63,7 @@ export async function generateSafeCode(
     nextSeq++;
     candidate = `${prefix}-${String(nextSeq).padStart(padLength, '0')}`;
     exists = await tx[modelName].findUnique({
-      where: { code: candidate },
+      where: { [codeField]: candidate },
       select: { id: true },
     });
     loopLimit--;

@@ -31,17 +31,25 @@ export class MaterialsService {
   }
 
   async createCategory(dto: CreateCategoryDto) {
-    const existing = await prisma.materialCategory.findUnique({
-      where: { code: dto.code },
-    });
-    if (existing) {
-      throw new Error(`Mã danh mục '${dto.code}' đã tồn tại`);
+    let code = dto.code?.trim();
+    if (!code) {
+      const now = new Date();
+      const prefix = `CAT-NVL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      code = await generateSafeCode(prisma, 'materialCategory', prefix);
+    } else {
+      code = code.toUpperCase();
+      const existing = await prisma.materialCategory.findUnique({
+        where: { code },
+      });
+      if (existing) {
+        throw new Error(`Mã danh mục '${code}' đã tồn tại`);
+      }
     }
 
     return prisma.materialCategory.create({
       data: {
-        code: dto.code,
-        name: dto.name,
+        code,
+        name: dto.name.trim(),
       },
     });
   }
@@ -171,23 +179,56 @@ export class MaterialsService {
   }
 
   async createMaterial(dto: CreateMaterialDto, userId: string) {
-    const existing = await prisma.material.findUnique({
-      where: { sku: dto.sku },
-    });
-    if (existing) {
-      throw new Error(`Mã nguyên vật liệu SKU '${dto.sku}' đã tồn tại`);
+    let sku = dto.sku?.trim();
+    if (!sku) {
+      const now = new Date();
+      const prefix = `NVL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      sku = await generateSafeCode(prisma, 'material', prefix);
+    } else {
+      sku = sku.toUpperCase();
+      const existing = await prisma.material.findUnique({
+        where: { sku },
+      });
+      if (existing) {
+        throw new Error(`Mã nguyên vật liệu SKU '${sku}' đã tồn tại`);
+      }
+    }
+
+    let categoryId = dto.categoryId?.trim();
+    if (!categoryId) {
+      const firstCat = await prisma.materialCategory.findFirst({
+        where: { deletedAt: null },
+      });
+      if (firstCat) {
+        categoryId = firstCat.id;
+      } else {
+        const defaultCat = await prisma.materialCategory.create({
+          data: {
+            code: 'CAT-NVL-CHUNG',
+            name: 'Nguyên vật liệu chung',
+          },
+        });
+        categoryId = defaultCat.id;
+      }
+    } else {
+      const category = await prisma.materialCategory.findUnique({
+        where: { id: categoryId },
+      });
+      if (!category || category.deletedAt !== null) {
+        throw new Error('Danh mục nguyên vật liệu không tồn tại');
+      }
     }
 
     return prisma.$transaction(async (tx) => {
       const material = await tx.material.create({
         data: {
-          sku: dto.sku,
-          name: dto.name,
-          categoryId: dto.categoryId,
-          unit: dto.unit,
+          sku,
+          name: dto.name.trim(),
+          categoryId,
+          unit: dto.unit.trim(),
           defaultPrice: dto.defaultPrice,
           minStockAlert: dto.minStockAlert,
-          notes: dto.notes,
+          notes: dto.notes?.trim() || null,
         },
         include: { category: true },
       });
@@ -328,20 +369,28 @@ export class MaterialsService {
   }
 
   async createSupplier(dto: CreateSupplierDto) {
-    const existing = await prisma.supplier.findUnique({
-      where: { code: dto.code },
-    });
-    if (existing) {
-      throw new Error(`Mã nhà cung cấp '${dto.code}' đã tồn tại`);
+    let code = dto.code?.trim();
+    if (!code) {
+      const now = new Date();
+      const prefix = `NCC-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      code = await generateSafeCode(prisma, 'supplier', prefix);
+    } else {
+      code = code.toUpperCase();
+      const existing = await prisma.supplier.findUnique({
+        where: { code },
+      });
+      if (existing) {
+        throw new Error(`Mã nhà cung cấp '${code}' đã tồn tại`);
+      }
     }
 
     return prisma.supplier.create({
       data: {
-        code: dto.code,
-        name: dto.name,
-        phone: dto.phone,
-        address: dto.address,
-        notes: dto.notes,
+        code,
+        name: dto.name.trim(),
+        phone: dto.phone?.trim() || null,
+        address: dto.address?.trim() || null,
+        notes: dto.notes?.trim() || null,
       },
     });
   }
