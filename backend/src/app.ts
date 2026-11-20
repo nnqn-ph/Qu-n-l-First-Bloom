@@ -63,17 +63,23 @@ import productionRoutes from './modules/production/production.routes';
 import ordersRoutes from './modules/orders/orders.routes';
 import financeRoutes from './modules/finance/finance.routes';
 
-app.use('/api/v1/auth', authRouter);
-app.use('/api/v1/users', usersRouter);
-app.use('/api/v1/material-categories', materialCategoriesRouter);
-app.use('/api/v1/materials', materialsRouter);
-app.use('/api/v1/suppliers', suppliersRouter);
-app.use('/api/v1/purchase-receipts', purchaseReceiptsRouter);
-app.use('/api/v1/inventory/materials', materialInventoryRouter);
-app.use('/api/v1', productsRoutes);
-app.use('/api/v1', productionRoutes);
-app.use('/api/v1', ordersRoutes);
-app.use('/api/v1', financeRoutes);
+// 4. Định tuyến API Router (Các module) - Hỗ trợ cả /api/v1 và /api để tương thích 100% với Frontend
+const registerApiModules = (prefix: string) => {
+  app.use(`${prefix}/auth`, authRouter);
+  app.use(`${prefix}/users`, usersRouter);
+  app.use(`${prefix}/material-categories`, materialCategoriesRouter);
+  app.use(`${prefix}/materials`, materialsRouter);
+  app.use(`${prefix}/suppliers`, suppliersRouter);
+  app.use(`${prefix}/purchase-receipts`, purchaseReceiptsRouter);
+  app.use(`${prefix}/inventory/materials`, materialInventoryRouter);
+  app.use(prefix, productsRoutes);
+  app.use(prefix, productionRoutes);
+  app.use(prefix, ordersRoutes);
+  app.use(prefix, financeRoutes);
+};
+
+registerApiModules('/api/v1');
+registerApiModules('/api');
 
 // 5. Phục vụ Frontend Static Files (Khi build production hoặc deploy Render)
 const possibleDistPaths = [
